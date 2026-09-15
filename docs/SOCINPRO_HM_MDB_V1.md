@@ -23,7 +23,8 @@ HM and MDB use one core. Their explicit bank adapters are BTG and Safra,
 respectively, through an already validated `BankReference`; this module does
 not alter bank rules. A deterministic catalogue/deal relation yields `PASS`.
 Missing, empty or uncertain catalogue/deal relations yield `REVIEW`, never a
-guess. A bank difference likewise remains visible as `REVIEW`.
+guess. A bank difference likewise remains visible as `REVIEW`. Any `REVIEW`
+or `BLOCKED` result is refused by operational publication.
 
 ## Publication and audit
 

@@ -32,17 +32,15 @@ def test_synthetic_vertical_for_hm_and_mdb(entity, bank):
         assert again.demonstrative_path == published.demonstrative_path
 
 
-def test_unknown_catalog_relation_is_review_and_visible_in_demonstrative():
+def test_unknown_catalog_relation_is_review_visible_and_blocks_publication():
     with TemporaryDirectory() as folder:
         root = Path(folder)
         result = process_socinpro(entity="HM", competence="2026-09", payments=(payment("HM", "2026-09"),), bank_result=BankReference("HM", "2026-09", "BTG", Decimal("100.00")), catalog_resolver=lambda _: None)
         assert result.status == "REVIEW"
         assert result.pending == ("RELACAO_CATALOGO_PENDENTE:SOC-1",)
-        published = publish_operational_result(result, root / "operational", root / "technical")
-        book = load_workbook(published.demonstrative_path, read_only=True)
-        assert "Pendencias" in book.sheetnames
-        assert book["Pendencias"]["A2"].value == "RELACAO_CATALOGO_PENDENTE:SOC-1"
-        book.close()
+        with pytest.raises(SocinproContractError, match="PUBLICACAO_SOCINPRO_BLOQUEADA"):
+            publish_operational_result(result, root / "operational", root / "technical")
+        assert not source_folder_for(root / "operational", "HM", "2026-09").exists()
 
 
 def test_fail_closed_for_duplicate_or_incompatible_bank_or_existing_human_file():

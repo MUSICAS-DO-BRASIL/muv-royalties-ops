@@ -154,6 +154,8 @@ def publish_operational_result(result: SocinproResult, operational_root: str | P
     human review. Technical provenance is written outside the operational tree.
     """
     _validate_context(result.entity, result.competence)
+    if result.status != "PASS":
+        raise SocinproContractError("PUBLICACAO_SOCINPRO_BLOQUEADA:RESULTADO_EM_REVISAO")
     source_folder = source_folder_for(operational_root, result.entity, result.competence)
     technical = Path(technical_root).resolve()
     if _overlaps(source_folder.resolve(), technical):
