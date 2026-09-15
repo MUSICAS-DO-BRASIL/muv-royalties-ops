@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "mappings": [
+    {
+      "entity": "HM",
+      "source_code": "SYNTHETIC-001",
+      "titular": "TITULAR SINTETICO",
+      "catalog": "CATALOGO SINTETICO",
+      "deal": "DEAL-SYNTHETIC-001",
+      "active": true
+    }
+  ]
+}

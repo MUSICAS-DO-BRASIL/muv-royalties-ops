@@ -12,7 +12,7 @@ from streamlit.testing.v1 import AppTest
     "bank_extraction_core", "btg_statement_parser", "btg_bank_adapter",
     "safra_royalties_classifier", "month_preparation", "hm_month_bootstrap",
     "cloud_aware_workbook_publisher", "cloud_native_workbook_publisher",
-    "bank_extraction_app_v2", "socinpro.socinpro_vertical",
+    "bank_extraction_app_v2", "socinpro.socinpro_vertical", "socinpro.real_ingestion",
 ])
 def test_core_and_app_import_in_fresh_process(module):
     root = Path(__file__).resolve().parents[1]

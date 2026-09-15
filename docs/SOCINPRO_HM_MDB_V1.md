@@ -45,6 +45,25 @@ demonstrative.
 
 ## Controlled real run
 
-Not yet authorized. A controlled real SOCINPRO run requires a separately
-reviewed portable extraction adapter, externally managed approved mappings,
-and the pre-existing validated bank result for the exact entity and competence.
+The V1.1 parser accepts the proven text-based payment PDF and the historical
+`pagamentos` workbook projection, using an explicit entity and competence.
+The mapping is runtime-only JSON selected through `MUV_SOCINPRO_MAPPING_PATH`;
+the versioned example is synthetic. Missing, malformed or ambiguous mappings
+block execution. A controlled real run may now be prepared with a manually
+downloaded input, an external approved mapping and the pre-existing validated
+bank result for the exact entity and competence. It still never publishes the
+official monthly workbook.
+
+## External mapping contract
+
+Set `MUV_SOCINPRO_MAPPING_PATH` to a local JSON file outside Git. Its required
+shape is `schema_version: 1` plus `mappings`; each mapping has `entity`,
+`source_code`, `titular`, `catalog`, `deal` and boolean `active`. A `(entity,
+source_code)` pair is unique. The parser verifies the mapped titular against
+the source titular after whitespace/accent normalization. The synthetic schema
+example is [socinpro_mapping.example.json](../recebimentos/process_extrato/socinpro/socinpro_mapping.example.json).
+
+Supported source types are intentionally limited to `SOCINPRO_PAYMENT_PDF`
+(textual payment demonstrativo) and `SOCINPRO_PAYMENT_WORKBOOK` (legacy
+`pagamentos` projection). Portal automation is not required for a controlled
+run: a human may download the input and provide it to the parser.
