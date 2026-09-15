@@ -48,6 +48,16 @@ def test_writer_writes_complete_a_to_g_and_preserves_unrelated_sheet(tmp_path):
     book.close()
 
 
+def test_writer_accepts_operational_headers_linked_to_bs(tmp_path):
+    path = tmp_path / "linked-headers.xlsx"
+    _book(path, [f"=bs!{column}1" for column in "ABCDEF"] + ["Fonte Pagadora"])
+    MdbSafraWorksheetWriter().write(path, _rows())
+    book = load_workbook(path, data_only=False)
+    assert [book["Safra"].cell(1, column).value for column in range(1, 7)] == [f"=bs!{column}1" for column in "ABCDEF"]
+    assert book["Safra"]["G2"].value == "Fonte A"
+    book.close()
+
+
 @pytest.mark.parametrize("headers,safra", [
     (HEADERS[:-1], True),
     (["data", "lancamento", "complemento", "documento", "valor_str", "valor", "outra"], True),

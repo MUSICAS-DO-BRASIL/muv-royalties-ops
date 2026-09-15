@@ -216,3 +216,26 @@ def test_mdb_facade_blocks_bank_source_mismatch(monkeypatch, tmp_path):
     assert outcome.errors == ("Resultado Safra inválido para MDB.",)
     assert not final.exists()
     assert sha256(template.read_bytes()).hexdigest() == template_hash
+
+
+def test_mdb_facade_does_not_publish_when_workbook_backend_fails(monkeypatch, tmp_path):
+    template = tmp_path / "template.xlsx"
+    book = Workbook(); sheet = book.active; sheet.title = "Safra"
+    sheet.append(["data", "lancamento", "complemento", "documento", "valor_str", "valor", "Fonte Pagadora"]); book.save(template)
+    template_hash = sha256(template.read_bytes()).hexdigest()
+    source = tmp_path / "source.pdf"; source.write_bytes(b"synthetic")
+    source_map = tmp_path / "map.json"; source_map.write_text(json.dumps({"aliases":[{"bank_payor_alias":"PAGADOR TESTE","canonical_royalty_source":"Fonte Teste"}]}))
+    monkeypatch.setenv("MUV_SAFRA_SOURCE_MAP", str(source_map)); monkeypatch.setattr(pdfplumber, "open", lambda _: _Pdf())
+    result = SafraAdapter().extract(source, "2026-09")
+    class FailingBackend:
+        reached = False
+        def write_safra_rows(self, *_args):
+            self.reached = True
+            raise RuntimeError("controlled backend failure")
+    backend = FailingBackend()
+    from mdb_safra_worksheet_writer import MdbSafraWorksheetWriter
+    writer = MdbSafraWorksheetWriter(backend=backend)
+    outcome = MdbMonthPreparationFacade(template_path=template, monthly_root=tmp_path, writer=writer).prepare(result, "2026-09")
+    final = tmp_path / "2026" / "092026" / "MDB" / "Conciliação - Músicas do Brasil_202609.xlsx"
+    assert backend.reached and outcome.status == "BLOCKED" and outcome.workbook_path is None
+    assert not final.exists() and sha256(template.read_bytes()).hexdigest() == template_hash
