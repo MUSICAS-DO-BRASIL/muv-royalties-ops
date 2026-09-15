@@ -1,0 +1,8 @@
+[tool.pytest.ini_options]
+pythonpath = ["recebimentos/process_extrato", "recebimentos/process_extrato/btg", "recebimentos/process_extrato/mdb"]
+testpaths = ["recebimentos/process_extrato"]
+addopts = "-ra --strict-markers"
+markers = [
+  "windows_only: exige Windows; omitido explicitamente em outros sistemas",
+  "corporate_environment: exige dados ou serviços corporativos; desabilitado por padrão",
+]

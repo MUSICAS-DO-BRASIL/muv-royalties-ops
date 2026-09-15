@@ -1,0 +1,15 @@
+{
+  "empresas": [
+    {
+      "nome": "Empresa Exemplo A",
+      "pasta": "empresa_exemplo_a",
+      "cnpjs": ["CNPJ_EXEMPLO"],
+      "marcadores": ["EXEMPLO_A"]
+    }
+  ],
+  "fonte_pagadora": {
+    "nome": "Fonte Pagadora Exemplo",
+    "cnpj": "CNPJ_EXEMPLO"
+  },
+  "tolerancia_centavos": 1
+}
