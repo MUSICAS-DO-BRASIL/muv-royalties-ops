@@ -90,24 +90,33 @@ def parse_payment_workbook(path: str | Path, *, source_reference: str | None = N
         raise SocinproIngestionError("WORKBOOK_SOCINPRO_INVALIDO")
     try:
         book = load_workbook(candidate, read_only=True, data_only=False, keep_links=True)
-        if "pagamentos" not in book.sheetnames:
+        payment_sheet = next((name for name in book.sheetnames if _key(name) == "pagamentos"), None)
+        if payment_sheet is None:
             raise SocinproIngestionError("ABA_PAGAMENTOS_AUSENTE")
-        sheet = book["pagamentos"]
-        headers = {_key(value): index for index, value in enumerate(next(sheet.iter_rows(min_row=1, max_row=1, values_only=True)))}
-        required = ("cod_socinpro", "titular", "data_pagamento", "valor_pagamento")
-        missing = [header for header in required if header not in headers]
+        sheet = book[payment_sheet]
+        header_row, headers = _find_payment_headers(sheet)
+        aliases = {
+            "source_code": ("cod_socinpro", "codigo na associacao"),
+            "titular": ("titular",),
+            "payment_date": ("data_pagamento", "data do pagamento"),
+            "payment_value": ("valor_pagamento", "valor"),
+            "document": ("arquivo_analitico", "documento"),
+        }
+        resolved = {name: next((headers[item] for item in options if item in headers), None) for name, options in aliases.items()}
+        missing = [name for name in ("source_code", "titular", "payment_date", "payment_value") if resolved[name] is None]
         if missing:
             raise SocinproIngestionError("CAMPOS_WORKBOOK_AUSENTES:" + ",".join(missing))
         rows: list[ParsedSocinproPayment] = []
-        for row_number, values in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
+        for row_number, values in enumerate(sheet.iter_rows(min_row=header_row + 1, values_only=True), start=header_row + 1):
             if not any(value is not None and str(value).strip() for value in values):
                 continue
-            source_code = str(values[headers["cod_socinpro"]] or "").strip()
-            titular = str(values[headers["titular"]] or "").strip()
-            payment_date = _parse_date(values[headers["data_pagamento"]])
-            original = _parse_brl(values[headers["valor_pagamento"]])
+            source_code = str(values[resolved["source_code"]] or "").strip()
+            titular = str(values[resolved["titular"]] or "").strip()
+            payment_date = _parse_date(values[resolved["payment_date"]])
+            original = _parse_brl(values[resolved["payment_value"]])
             _require_payment_fields(source_code, titular, payment_date, original)
-            document = str(values[headers["arquivo_analitico"]] or "").strip() if "arquivo_analitico" in headers else candidate.name
+            document_index = resolved["document"]
+            document = str(values[document_index] or "").strip() if document_index is not None else candidate.name
             reference = source_reference or f"{candidate.as_uri()}#pagamentos!{row_number}"
             rows.append(ParsedSocinproPayment(source_code, titular, payment_date, original, -original, document or candidate.name, reference))
         if not rows:
@@ -178,6 +187,15 @@ def _parse_payment_text(text: str, reference: str, document: str) -> ParsedSocin
     return ParsedSocinproPayment(source_code, titular, payment_date, original, -original, document, reference)
 
 
+def _find_payment_headers(sheet) -> tuple[int, dict[str, int]]:
+    """Find the approved legacy projection or operational display header."""
+    for row_number, values in enumerate(sheet.iter_rows(min_row=1, max_row=12, values_only=True), start=1):
+        headers = {_key(value): index for index, value in enumerate(values) if value is not None}
+        if "titular" in headers and ("cod_socinpro" in headers or "codigo na associacao" in headers):
+            return row_number, headers
+    raise SocinproIngestionError("CAMPOS_WORKBOOK_AUSENTES:cabecalho")
+
+
 def _require_payment_fields(code: str, titular: str, payment_date: date, original: Decimal) -> None:
     if not code: raise SocinproIngestionError("CODIGO_SOCINPRO_AUSENTE")
     if not titular: raise SocinproIngestionError("TITULAR_SOCINPRO_AUSENTE")
@@ -194,7 +212,10 @@ def _parse_date(value: object) -> date:
 
 
 def _parse_brl(value: object) -> Decimal:
-    if isinstance(value, float): raise SocinproIngestionError("FLOAT_SOCINPRO_NAO_PERMITIDO")
+    # openpyxl exposes numeric Excel cells as float. Convert its displayed
+    # decimal representation immediately; no float reaches the typed contract.
+    if isinstance(value, float):
+        return Decimal(str(value))
     raw = str(value).strip().replace("R$", "").replace(" ", "")
     if not raw: raise SocinproIngestionError("VALOR_SOCINPRO_AUSENTE")
     negative = "-" in raw

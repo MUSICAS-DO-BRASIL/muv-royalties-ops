@@ -60,6 +60,16 @@ def test_real_workbook_projection_is_read_only_and_requires_legacy_headers(tmp_p
         parse_payment_workbook(missing)
 
 
+def test_operational_payment_workbook_layout_with_header_on_row_four_is_supported(tmp_path):
+    path = tmp_path / "operational.xlsx"; book = Workbook(); sheet = book.active; sheet.title = "Pagamentos"
+    sheet.append([]); sheet.append(["Pagamentos"]); sheet.append([])
+    sheet.append(["Data do pagamento", "Código na associação", "Titular", "Valor", "Documento", "Status", "Observação"])
+    sheet.append([date(2026, 9, 25), "123456", "TITULAR SINTETICO", Decimal("-100.50"), "evidence.pdf", "ok", None])
+    book.save(path); book.close()
+    parsed = parse_payment_workbook(path)
+    assert len(parsed) == 1 and parsed[0].source_code == "123456" and parsed[0].receipt_value == Decimal("100.50")
+
+
 @pytest.mark.parametrize("entity,bank", (("HM", "BTG"), ("MDB", "SAFRA")))
 def test_real_parser_flows_to_each_vertical_with_external_mapping(tmp_path, entity, bank):
     source = tmp_path / "socinpro.pdf"; payment_pdf(source)

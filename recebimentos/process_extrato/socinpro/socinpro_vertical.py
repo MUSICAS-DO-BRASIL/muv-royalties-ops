@@ -21,7 +21,7 @@ import re
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
 
-from cloud_aware_workbook_publisher import create_workbook_only
+from cloud_aware_workbook_publisher import create_workbook_only, semantic_fingerprint
 
 
 SOURCE_NAME = "SOCINPRO"
@@ -166,7 +166,7 @@ def publish_operational_result(result: SocinproResult, operational_root: str | P
         staged = Path(temporary) / filename
         _write_demonstrative(staged, result)
         if destination.exists():
-            if _binary_hash(destination) != _binary_hash(staged):
+            if not _same_demonstrative(destination, staged):
                 raise SocinproContractError("DEMONSTRATIVO_EXISTENTE_DIVERGENTE")
         else:
             publication = create_workbook_only(staged, destination)
@@ -244,6 +244,15 @@ def _date(value: object) -> date:
 
 def _binary_hash(path: Path) -> str:
     return sha256(path.read_bytes()).hexdigest()
+
+
+def _same_demonstrative(left: Path, right: Path) -> bool:
+    if _binary_hash(left) == _binary_hash(right):
+        return True
+    try:
+        return semantic_fingerprint(left) == semantic_fingerprint(right)
+    except Exception:
+        return False
 
 
 def _overlaps(left: Path, right: Path) -> bool:
