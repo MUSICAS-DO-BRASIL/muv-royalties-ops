@@ -185,10 +185,12 @@ class BankExtractionService:
         *,
         mdb_template_path: str | Path | None = None,
         monthly_root: str | Path | None = None,
+        mdb_safra_sheet_name: str = "Safra",
     ) -> None:
         self._adapters = {"HM": BTGAdapter(), "MDB": SafraAdapter()}
         self._mdb_template_path = Path(mdb_template_path) if mdb_template_path is not None else None
         self._monthly_root = Path(monthly_root) if monthly_root is not None else ROOT
+        self._mdb_safra_sheet_name = mdb_safra_sheet_name
 
     def process(self, *, entity: str, period: str, source_path: str | Path) -> BankExtractionResult:
         if entity not in ENTITY_BANK:
@@ -257,6 +259,7 @@ class BankExtractionService:
         facade = facade_module.MdbMonthPreparationFacade(
             template_path=self._mdb_template_path,
             monthly_root=self._monthly_root,
+            layout=facade_module.MdbWorkbookLayout(safra_sheet_name=self._mdb_safra_sheet_name),
         )
         try:
             with TemporaryDirectory(prefix="muv-mdb-bootstrap-") as temp:

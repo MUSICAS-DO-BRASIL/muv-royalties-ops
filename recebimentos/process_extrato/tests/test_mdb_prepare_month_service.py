@@ -35,11 +35,17 @@ class _Pdf:
     def __exit__(self, *_): return False
 
 
-def _template(path: Path) -> None:
+def _template(path: Path, sheet_name: str = "Safra") -> None:
     book = Workbook()
     sheet = book.active
-    sheet.title = "Safra"
-    sheet.append(["data", "lancamento", "complemento", "documento", "valor_str", "valor", "Fonte Pagadora"])
+    sheet.title = sheet_name
+    sheet.append(["data", "lancamento", "complemento", "documento", "valor_str", "valor", "Fonte Pagadora", "Situação"])
+    reconciliation = book.create_sheet("2. Conciliação TESTE")
+    reconciliation["A1"] = "Fonte"; reconciliation["B1"] = "Total"
+    reconciliation["A2"] = "Fonte Teste"
+    reconciliation["B2"] = f'=SUMIFS(\'{sheet_name}\'!$F:$F,\'{sheet_name}\'!$G:$G,A2)'
+    staging = book.create_sheet("bs")
+    staging.append(["data", "lancamento", "complemento", "documento", "valor_str", "valor"])
     book.create_sheet("Sentinela")["A1"] = "sintetico"
     book.save(path)
 
@@ -50,11 +56,12 @@ def _map(path: Path, aliases: list[dict[str, str]]) -> None:
 
 def test_mdb_prepare_month_uses_real_facade_and_is_create_only(monkeypatch, tmp_path):
     template = tmp_path / "template.xlsx"
-    _template(template)
+    sheet_name = "1. SAFRA TESTE"
+    _template(template, sheet_name)
     _map(tmp_path / "map.json", [{"bank_payor_alias": "PAGADOR TESTE", "canonical_royalty_source": "Fonte Teste"}])
     monkeypatch.setenv("MUV_SAFRA_SOURCE_MAP", str(tmp_path / "map.json"))
     monkeypatch.setattr(pdfplumber, "open", lambda _: _Pdf())
-    service = BankExtractionService(mdb_template_path=template, monthly_root=tmp_path)
+    service = BankExtractionService(mdb_template_path=template, monthly_root=tmp_path, mdb_safra_sheet_name=sheet_name)
 
     first_status, first_detail = service.prepare_month(
         entity="MDB", period="2026-09", source_bytes=b"synthetic", source_name="statement.pdf"
@@ -62,12 +69,16 @@ def test_mdb_prepare_month_uses_real_facade_and_is_create_only(monkeypatch, tmp_
     final = tmp_path / "2026" / "092026" / "MDB" / "Conciliação - Músicas do Brasil_202609.xlsx"
     assert first_status == "PREPARED" and Path(first_detail) == final and final.is_file()
     output = load_workbook(final)
-    row = output["Safra"][2]
+    row = output[sheet_name][2]
     assert row[0].value.strftime("%Y-%m-%d") == "2026-09-01"
     assert row[1].value == "TED RECEBIDA BCO 000 PAGADOR TESTE"
     assert all(cell.value is not None for cell in row[2:5])
     assert row[4].value == "1.234,56"
     assert Decimal(str(row[5].value)) == Decimal("1234.56") and row[6].value == "Fonte Teste"
+    assert row[7].value is None
+    downstream_formula = output["2. Conciliação TESTE"]["B2"].value
+    assert sheet_name in downstream_formula and "$F:$F" in downstream_formula and "$G:$G" in downstream_formula
+    assert output["bs"].max_row == 1
     assert output["Sentinela"]["A1"].value == "sintetico"
     output.close()
     first_hash = sha256(final.read_bytes()).hexdigest()
@@ -105,6 +116,18 @@ def test_mdb_prepare_month_blocks_competence_mismatch(monkeypatch, tmp_path):
     monkeypatch.setenv("MUV_SAFRA_SOURCE_MAP", str(tmp_path / "map.json"))
     monkeypatch.setattr(pdfplumber, "open", lambda _: _Pdf("08/2026"))
     service = BankExtractionService(mdb_template_path=template, monthly_root=tmp_path)
+    status, _ = service.prepare_month(entity="MDB", period="2026-09", source_bytes=b"synthetic", source_name="statement.pdf")
+    final = tmp_path / "2026" / "092026" / "MDB" / "Conciliação - Músicas do Brasil_202609.xlsx"
+    assert status == "BLOCKED" and not final.exists()
+
+
+def test_mdb_prepare_month_blocks_missing_configured_safra_sheet(monkeypatch, tmp_path):
+    template = tmp_path / "template.xlsx"
+    _template(template)
+    _map(tmp_path / "map.json", [{"bank_payor_alias": "PAGADOR TESTE", "canonical_royalty_source": "Fonte Teste"}])
+    monkeypatch.setenv("MUV_SAFRA_SOURCE_MAP", str(tmp_path / "map.json"))
+    monkeypatch.setattr(pdfplumber, "open", lambda _: _Pdf())
+    service = BankExtractionService(mdb_template_path=template, monthly_root=tmp_path, mdb_safra_sheet_name="SAFRA AUSENTE")
     status, _ = service.prepare_month(entity="MDB", period="2026-09", source_bytes=b"synthetic", source_name="statement.pdf")
     final = tmp_path / "2026" / "092026" / "MDB" / "Conciliação - Músicas do Brasil_202609.xlsx"
     assert status == "BLOCKED" and not final.exists()

@@ -8,7 +8,7 @@ import shutil
 
 from bank_extraction_core import SafraExtractionResult
 from cloud_aware_workbook_publisher import create_workbook_only
-from mdb_safra_worksheet_writer import MdbSafraWorksheetWriter
+from mdb_safra_worksheet_writer import MdbSafraWorksheetWriter, MdbWorkbookLayout
 
 
 @dataclass(frozen=True)
@@ -19,9 +19,10 @@ class MdbMonthPreparationResult:
 
 
 class MdbMonthPreparationFacade:
-    def __init__(self, *, template_path: str | Path, monthly_root: str | Path, writer: MdbSafraWorksheetWriter | None = None) -> None:
+    def __init__(self, *, template_path: str | Path, monthly_root: str | Path, layout: MdbWorkbookLayout = MdbWorkbookLayout("Safra"), writer: MdbSafraWorksheetWriter | None = None) -> None:
         self.template_path = Path(template_path)
         self.monthly_root = Path(monthly_root)
+        self.layout = layout
         self.writer = writer or MdbSafraWorksheetWriter()
 
     def prepare(self, result: SafraExtractionResult, competence: str) -> MdbMonthPreparationResult:
@@ -37,7 +38,7 @@ class MdbMonthPreparationFacade:
             with TemporaryDirectory(prefix="muv-mdb-") as temporary:
                 staged = Path(temporary) / destination.name
                 shutil.copy2(self.template_path, staged)
-                self.writer.write(staged, result.safra_rows)
+                self.writer.write(staged, result.safra_rows, layout=self.layout)
                 publication = create_workbook_only(staged, destination)
                 if publication.status != "PASS":
                     return MdbMonthPreparationResult("BLOCKED", None, (publication.status,))
