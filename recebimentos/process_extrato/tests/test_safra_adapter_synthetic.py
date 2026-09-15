@@ -7,7 +7,7 @@ import pdfplumber
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from bank_extraction_core import SafraAdapter
+from bank_extraction_core import SafraAdapter, SafraExtractionResult
 
 
 _VALID_STATEMENT_TEXT = """Extrato de Movimentação EMPRESA TESTE ALFA
@@ -90,6 +90,31 @@ def test_safra_adapter_source_hash_and_output_are_deterministic(monkeypatch, tmp
     assert result_run_1.source_sha256 == result_run_2.source_sha256
     assert result_run_1 == result_run_2
     assert result_run_1.operational_credits == result_run_2.operational_credits
+    assert result_run_1.safra_rows == result_run_2.safra_rows
+
+
+def test_safra_adapter_preserves_rich_rows_without_changing_operational_credits(monkeypatch, tmp_path):
+    source = _prepare_valid_safra_source(monkeypatch, tmp_path)
+
+    result = SafraAdapter().extract(source, "2026-08")
+
+    assert isinstance(result, SafraExtractionResult)
+    assert len(result.safra_rows) == len(result.operational_credits) == 3
+    first_row, first_credit = result.safra_rows[0], result.operational_credits[0]
+    assert first_row.lancamento == first_credit.description
+    assert first_row.complemento == "descrição multiline sintética"
+    assert first_row.documento == "0001"
+    assert first_row.valor_str == "1.234,56"
+    assert first_row.credit == Decimal("1234.56")
+    assert [(row.transaction_date, row.lancamento, row.credit, row.payor_source, row.status) for row in result.safra_rows] == [
+        (credit.transaction_date, credit.description, credit.credit, credit.payor_source, credit.status)
+        for credit in result.operational_credits
+    ]
+    assert [(row.lancamento, row.complemento) for row in result.safra_rows] == [
+        ("TED RECEBIDA BCO 000 PAGADOR TESTE ALFA", "descrição multiline sintética"),
+        ("TED RECEBIDA BCO 000 PAGADOR TESTE BETA", None),
+        ("TED RECEBIDA BCO 000 PAGADOR TESTE GAMA", None),
+    ]
 
 
 def test_safra_adapter_source_hash_changes_with_different_input(monkeypatch, tmp_path):

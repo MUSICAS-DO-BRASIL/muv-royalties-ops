@@ -35,6 +35,19 @@ class OperationalCredit:
 
 
 @dataclass(frozen=True)
+class SafraWorksheetRow:
+    """Lossless Safra row projection reserved for the MDB worksheet writer."""
+    transaction_date: date
+    lancamento: str
+    complemento: str | None
+    documento: str | None
+    valor_str: str
+    credit: Decimal
+    payor_source: str
+    status: Literal["PASS", "REVIEW"]
+
+
+@dataclass(frozen=True)
 class BankExtractionResult:
     entity: str
     bank_source: str
@@ -63,6 +76,12 @@ class BankExtractionResult:
         if self.unknown_source_count or self.warnings:
             return "REVIEW"
         return "PASS"
+
+
+@dataclass(frozen=True)
+class SafraExtractionResult(BankExtractionResult):
+    """Safra-specific result extension without changing the shared bank contract."""
+    safra_rows: tuple[SafraWorksheetRow, ...] = ()
 
 
 def _load_module(name: str, path: Path):
@@ -136,28 +155,40 @@ class SafraAdapter:
         source_map = classifier.load_source_map()
         rows = parser.extrair_lancamentos(pages, header)
         operational: list[OperationalCredit] = []
+        safra_rows: list[SafraWorksheetRow] = []
         for row in rows:
             amount = Decimal(row.valor_str.replace(".", "").replace(",", ".")).quantize(Decimal("0.01"))
             classification = classifier.classify_transaction(row.lancamento, row.complemento, amount, source_map=source_map)
             if classification.category not in {"ROYALTY_RECEIPT", "REVIEW_UNKNOWN_CREDIT"}:
                 continue
             source_name = classification.canonical_source or "REVIEW / UNKNOWN"
-            operational.append(OperationalCredit(
-                datetime.strptime(row.data, "%d/%m/%Y").date(), row.lancamento, amount, source_name,
-                "PASS" if classification.canonical_source else "REVIEW",
+            status = "PASS" if classification.canonical_source else "REVIEW"
+            transaction_date = datetime.strptime(row.data, "%d/%m/%Y").date()
+            operational.append(OperationalCredit(transaction_date, row.lancamento, amount, source_name, status))
+            safra_rows.append(SafraWorksheetRow(
+                transaction_date, row.lancamento, row.complemento, row.documento,
+                row.valor_str, amount, source_name, status,
             ))
         unknown = sum(x.status == "REVIEW" for x in operational)
-        return BankExtractionResult(
+        return SafraExtractionResult(
             self.entity, self.bank_source, period, source.name, "PASS", "PASS", None,
             len(rows), len(operational), None, None, sum((x.credit for x in operational), Decimal("0.00")), None, None,
             tuple(operational), unknown,
             ((f"{unknown} crédito(s) sem Fonte Pagadora confirmada.",) if unknown else ()), (), _hash(source),
+            tuple(safra_rows),
         )
 
 
 class BankExtractionService:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        mdb_template_path: str | Path | None = None,
+        monthly_root: str | Path | None = None,
+    ) -> None:
         self._adapters = {"HM": BTGAdapter(), "MDB": SafraAdapter()}
+        self._mdb_template_path = Path(mdb_template_path) if mdb_template_path is not None else None
+        self._monthly_root = Path(monthly_root) if monthly_root is not None else ROOT
 
     def process(self, *, entity: str, period: str, source_path: str | Path) -> BankExtractionResult:
         if entity not in ENTITY_BANK:
@@ -170,7 +201,7 @@ class BankExtractionService:
 
     def month_folder(self, entity: str, period: str) -> Path:
         year, month = period.split("-")
-        return ROOT / year / f"{month}{year}" / entity
+        return self._monthly_root / year / f"{month}{year}" / entity
 
     def month_status(self, entity: str, period: str) -> tuple[bool, Path | None]:
         folder = self.month_folder(entity, period)
@@ -216,4 +247,23 @@ class BankExtractionService:
                 statement.write_bytes(source_bytes)
                 context = bootstrap.prepare_hm_month(period=period, btg_statement=statement, monthly_root=ROOT)
             return context.validation_status, "; ".join(context.review_reasons)
-        return "REVIEW", "O bootstrap MDB ainda não possui uma facade homologada; nenhum workbook foi criado."
+        if entity != "MDB":
+            return "BLOCKED", "Entidade inválida para preparação mensal."
+        if self._mdb_template_path is None:
+            return "REVIEW", "Template MDB não configurado; nenhum workbook foi criado."
+        if not self._mdb_template_path.is_file():
+            return "BLOCKED", "Template MDB não encontrado; nenhum workbook foi criado."
+        facade_module = _load_module("bank_app_mdb_month_facade", MDB_DIR / "mdb_month_preparation_facade.py")
+        facade = facade_module.MdbMonthPreparationFacade(
+            template_path=self._mdb_template_path,
+            monthly_root=self._monthly_root,
+        )
+        try:
+            with TemporaryDirectory(prefix="muv-mdb-bootstrap-") as temp:
+                statement = Path(temp) / source_name
+                statement.write_bytes(source_bytes)
+                result = self.process(entity="MDB", period=period, source_path=statement)
+                outcome = facade.prepare(result, period)
+        except ValueError as exc:
+            return "BLOCKED", str(exc)
+        return outcome.status, "; ".join(outcome.errors) if outcome.errors else str(outcome.workbook_path or "")
