@@ -53,6 +53,7 @@ class PlaywrightSocinproSession:
         self._page = None
         self._competence: str | None = None
         self._search_confirmed = False
+        self._search_clicked = False
         self._navigation_diagnostics: dict[str, object] = {}
         self.browser_started = False
 
@@ -89,11 +90,18 @@ class PlaywrightSocinproSession:
             self._set_date(end_field, end.strftime("%d/%m/%Y"))
             if start_field.input_value().strip() != start.strftime("%d/%m/%Y") or end_field.input_value().strip() != end.strftime("%d/%m/%Y"):
                 raise PortalAdapterError("DATE_RANGE_VALIDATION_FAILED")
-            before = page.locator("tbody tr:visible").all_inner_texts()
-            self._click_text(page, ["Pesquisar"])
+            before = self._search_snapshot(page)
+            self._activate_search(page)
             self._confirm_search_refresh(page, before)
             self._competence = competence
             self._search_confirmed = True
+        except PortalAdapterError as exc:
+            if exc.category.startswith("SEARCH_"):
+                raise
+            raise PortalAdapterError(
+                "COMPETENCE_SELECTION_FAILED",
+                self._failure_diagnostics("COMPETENCE_SELECTION", "COMPETENCE_SELECTION_FAILED"),
+            ) from None
         except Exception as exc:
             raise PortalAdapterError(
                 "COMPETENCE_SELECTION_FAILED",
@@ -105,7 +113,7 @@ class PlaywrightSocinproSession:
         return dict(self._navigation_diagnostics)
 
     def download_statements(self, account: RuntimeAccount) -> Iterable[Path]:
-        if not self._competence or not self._search_confirmed:
+        if not self._competence or not self._search_clicked or not self._search_confirmed:
             raise PortalAdapterError("COMPETENCE_NOT_SELECTED")
         page = self._require_page()
         rows = page.locator("tbody tr:visible")
@@ -280,15 +288,47 @@ class PlaywrightSocinproSession:
         field.fill(value)
         field.press("Tab")
 
-    def _confirm_search_refresh(self, page, before: list[str]) -> None:
+    def _activate_search(self, page) -> None:
+        """Click the visible actionable Pesquisar control, never its text node."""
+        text = re.compile(r"^\s*Pesquisar\s*$", re.I)
+        candidates = [
+            page.get_by_role("button", name=text),
+            page.locator("input[type='submit'][value*='Pesquisar' i], input[type='button'][value*='Pesquisar' i]"),
+            page.locator("button[title*='Pesquisar' i], [role='button'][aria-label*='Pesquisar' i]"),
+            page.get_by_text(text).locator("xpath=ancestor-or-self::*[self::button or self::a or @role='button' or @onclick][1]"),
+            page.locator("button:has-text('Pesquisar'), a:has-text('Pesquisar')"),
+        ]
+        for candidate in candidates:
+            try:
+                control = candidate.first
+                control.wait_for(state="visible", timeout=self.settings.timeout_ms)
+                if not control.is_enabled():
+                    continue
+                control.click(timeout=self.settings.timeout_ms)
+                self._search_clicked = True
+                return
+            except Exception:
+                continue
+        raise PortalAdapterError("SEARCH_ACTION_FAILED", self._failure_diagnostics("SEARCH", "SEARCH_ACTION_FAILED"))
+
+    def _search_snapshot(self, page) -> tuple[tuple[str, ...], str, str | None]:
+        rows = tuple(page.locator("tbody tr:visible").all_inner_texts())
+        body = page.locator("body").inner_text().casefold()
+        try:
+            markup = page.locator("tbody").inner_html()
+        except Exception:
+            markup = None
+        return rows, body, markup
+
+    def _confirm_search_refresh(self, page, before: tuple[tuple[str, ...], str, str | None]) -> None:
         deadline = time.monotonic() + self.settings.timeout_ms / 1000
         while time.monotonic() < deadline:
-            current = page.locator("tbody tr:visible").all_inner_texts()
-            body = page.locator("body").inner_text().casefold()
-            if current != before or any(text in body for text in ("nenhum demonstrativo", "sem demonstrativo", "não existem")):
+            current = self._search_snapshot(page)
+            if current != before:
+                self._search_confirmed = True
                 return
             page.wait_for_timeout(250)
-        raise PortalAdapterError("SEARCH_REFRESH_NOT_CONFIRMED")
+        raise PortalAdapterError("SEARCH_REFRESH_NOT_CONFIRMED", self._failure_diagnostics("SEARCH", "SEARCH_REFRESH_NOT_CONFIRMED"))
 
     def _download(self, page, account: RuntimeAccount, label: str, selectors: list[str]) -> Path:
         button = self._first_visible(page, selectors)

@@ -53,6 +53,8 @@ def _known_failure_status(category: str) -> tuple[str, str]:
         return "PORTAL_LAYOUT_REVIEW", "POST_LOGIN_NAVIGATION"
     if category == "COMPETENCE_SELECTION_FAILED":
         return category, "COMPETENCE_SELECTION"
+    if category.startswith("SEARCH_"):
+        return category, "SEARCH"
     if category == "DOCUMENT_DISCOVERY_FAILED":
         return category, "DOCUMENT_DISCOVERY"
     if category.startswith("DOWNLOAD_"):

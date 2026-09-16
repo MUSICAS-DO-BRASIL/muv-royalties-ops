@@ -24,11 +24,17 @@ class FakeLocator:
     def inner_text(self, **_kwargs):
         return self.text
 
+    def inner_html(self):
+        return self.text
+
     def wait_for(self, **_kwargs):
         return None
 
     def count(self):
         return self._count
+
+    def all_inner_texts(self):
+        return [self.text] if self._count else []
 
     def nth(self, _index):
         return self
@@ -80,6 +86,7 @@ def test_no_payment_and_unexpected_page_are_distinct(tmp_path):
     session = PlaywrightSocinproSession(BrowserSettings(tmp_path))
     session._page = FakePage("Nenhum demonstrativo")
     session._competence = "2026-08"
+    session._search_clicked = True
     session._search_confirmed = True
     assert tuple(session.download_statements(RuntimeAccount(1, "user", "secret"))) == ()
 
@@ -215,8 +222,9 @@ def test_successful_navigation_continues_to_competence_selection(tmp_path):
     start_field, end_field = Field(), Field()
     session._navigate_to_demonstrativo = lambda _page: None
     session._first_visible = lambda _page, selectors: start_field if "dtInicial" in selectors[0] else end_field
-    session._click_text = lambda _page, labels: labels == ["Pesquisar"]
-    session._confirm_search_refresh = lambda *_args: None
+    session._search_snapshot = lambda _page: ((), "", None)
+    session._activate_search = lambda _page: setattr(session, "_search_clicked", True)
+    session._confirm_search_refresh = lambda *_args: setattr(session, "_search_confirmed", True)
 
     session.select_competence("2026-08")
 
@@ -238,3 +246,152 @@ def test_competence_failure_preserves_initialized_navigation_diagnostics(tmp_pat
 
     assert caught.value.diagnostics["PORTAL_STAGE"] == "COMPETENCE_SELECTION"
     assert caught.value.diagnostics["DEMONSTRATIVO_PAGE_CONFIRMED"] is True
+
+
+class SearchControl:
+    def __init__(self, click=None, enabled=True):
+        self.first = self
+        self._click = click or (lambda: None)
+        self._enabled = enabled
+
+    def wait_for(self, **_kwargs):
+        return None
+
+    def is_enabled(self):
+        return self._enabled
+
+    def click(self, **_kwargs):
+        return self._click()
+
+    def locator(self, _selector):
+        return self
+
+
+class BrokenSearchControl(SearchControl):
+    def wait_for(self, **_kwargs):
+        raise TimeoutError("not visible")
+
+
+class SearchPage:
+    def __init__(self, control):
+        self.control = control
+        self.rows = []
+        self.body = "Nenhum demonstrativo encontrado"
+        self.markup = "<tr class='empty'></tr>"
+
+    def get_by_role(self, _role, **_kwargs):
+        return BrokenSearchControl()
+
+    def get_by_text(self, _text):
+        return BrokenSearchControl() if self.control is None else self.control
+
+    def locator(self, selector):
+        if "tbody tr" in selector:
+            return FakeLocator(self.rows[0] if self.rows else "", len(self.rows))
+        if selector == "body":
+            return FakeLocator(self.body)
+        if selector == "tbody":
+            locator = FakeLocator()
+            locator.inner_html = lambda: self.markup
+            return locator
+        return BrokenSearchControl()
+
+    def wait_for_timeout(self, _milliseconds):
+        return None
+
+
+def test_search_activates_actionable_parent_of_nested_visible_text(tmp_path):
+    clicked = []
+    page = SearchPage(SearchControl(lambda: clicked.append(True)))
+    session = PlaywrightSocinproSession(BrowserSettings(tmp_path))
+
+    session._activate_search(page)
+
+    assert clicked == [True]
+    assert session._search_clicked is True
+
+
+def test_search_activates_role_button_control(tmp_path):
+    clicked = []
+
+    class ButtonPage(SearchPage):
+        def get_by_role(self, _role, **_kwargs):
+            return SearchControl(lambda: clicked.append(True))
+
+    session = PlaywrightSocinproSession(BrowserSettings(tmp_path))
+    session._activate_search(ButtonPage(None))
+
+    assert clicked == [True]
+    assert session._search_clicked is True
+
+
+def test_search_click_is_not_recorded_when_action_cannot_be_activated(tmp_path):
+    session = PlaywrightSocinproSession(BrowserSettings(tmp_path))
+
+    with pytest.raises(PortalAdapterError, match="SEARCH_ACTION_FAILED"):
+        session._activate_search(SearchPage(None))
+
+    assert session._search_clicked is False
+
+
+def test_search_refresh_requires_post_click_result_mutation(tmp_path):
+    page = SearchPage(SearchControl())
+    session = PlaywrightSocinproSession(BrowserSettings(tmp_path))
+    before = session._search_snapshot(page)
+    page.markup = "<tr><td>25/08/2026</td></tr>"
+
+    session._confirm_search_refresh(page, before)
+
+    assert session._search_confirmed is True
+
+
+def test_pre_search_empty_state_cannot_authorize_no_payment(tmp_path):
+    session = PlaywrightSocinproSession(BrowserSettings(tmp_path))
+    session._page = FakePage("Nenhum demonstrativo")
+    session._competence = "2026-08"
+
+    with pytest.raises(PortalAdapterError, match="COMPETENCE_NOT_SELECTED"):
+        session.download_statements(RuntimeAccount(1, "user", "secret"))
+
+
+def test_refreshed_empty_search_allows_no_payment(tmp_path):
+    page = SearchPage(SearchControl())
+    session = PlaywrightSocinproSession(BrowserSettings(tmp_path))
+    before = session._search_snapshot(page)
+    session._activate_search(page)
+    page.markup = "<tr class='empty refreshed'></tr>"
+    session._confirm_search_refresh(page, before)
+    session._page = page
+    session._competence = "2026-08"
+
+    assert tuple(session.download_statements(RuntimeAccount(1, "user", "secret"))) == ()
+
+
+def test_select_competence_activates_search_and_confirms_payment_refresh(tmp_path):
+    page = SearchPage(None)
+    session = PlaywrightSocinproSession(BrowserSettings(tmp_path))
+    session._page = page
+    session._navigate_to_demonstrativo = lambda _page: None
+
+    class Field:
+        def __init__(self): self.value = ""
+        def fill(self, value): self.value = value
+        def press(self, _key): return None
+        def input_value(self): return self.value
+
+    start, end = Field(), Field()
+    session._first_visible = lambda _page, selectors: start if "dtInicial" in selectors[0] else end
+    def refresh_payment():
+        page.rows = ["25/08/2026 demonstrativo"]
+        page.body = "Resultado atualizado"
+        page.markup = "<tr><td>25/08/2026</td></tr>"
+
+    page.control = SearchControl(refresh_payment)
+
+    session.select_competence("2026-08")
+
+    assert (start.value, end.value) == ("01/08/2026", "31/08/2026")
+    assert session._search_clicked is True
+    assert session._search_confirmed is True
+    session._download = lambda *_args: tmp_path / "synthetic.pdf"
+    assert len(tuple(session.download_statements(RuntimeAccount(1, "user", "secret")))) == 2
