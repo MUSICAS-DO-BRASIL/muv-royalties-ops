@@ -55,6 +55,7 @@ class PlaywrightSocinproSession:
         self._search_confirmed = False
         self._search_clicked = False
         self._navigation_diagnostics: dict[str, object] = {}
+        self._competence_diagnostics: dict[str, object] = {}
         self.browser_started = False
 
     def authenticate(self, account: RuntimeAccount) -> None:
@@ -77,6 +78,7 @@ class PlaywrightSocinproSession:
         page = self._require_page()
         self._navigation_diagnostics = self._new_navigation_diagnostics(page)
         start, end = competence_date_range(competence)
+        self._competence_diagnostics = self._new_competence_diagnostics(start.strftime("%d/%m/%Y"), end.strftime("%d/%m/%Y"))
         try:
             self._navigate_to_demonstrativo(page)
         except PortalAdapterError:
@@ -84,19 +86,18 @@ class PlaywrightSocinproSession:
             # collapse a portal layout failure into a competence failure.
             raise
         try:
-            start_field = self._first_visible(page, ["input[id*='dtInicial']", "input[name*='dtInicial']"])
-            end_field = self._first_visible(page, ["input[id*='dtFinal']", "input[name*='dtFinal']"])
-            self._set_date(start_field, start.strftime("%d/%m/%Y"))
-            self._set_date(end_field, end.strftime("%d/%m/%Y"))
-            if start_field.input_value().strip() != start.strftime("%d/%m/%Y") or end_field.input_value().strip() != end.strftime("%d/%m/%Y"):
-                raise PortalAdapterError("DATE_RANGE_VALIDATION_FAILED")
+            start_field = self._date_control(page, "START_DATE", ["input[aria-label*='data inicial' i]", "input[placeholder*='data inicial' i]", "input[name*='dtInicial' i]", "input[id*='dtInicial' i]", "input[name*='dataInicial' i]", "input[id*='dataInicial' i]"])
+            end_field = self._date_control(page, "END_DATE", ["input[aria-label*='data final' i]", "input[placeholder*='data final' i]", "input[name*='dtFinal' i]", "input[id*='dtFinal' i]", "input[name*='dataFinal' i]", "input[id*='dataFinal' i]"])
+            self._set_competence_date(start_field, "START_DATE", start.strftime("%d/%m/%Y"))
+            self._set_competence_date(end_field, "END_DATE", end.strftime("%d/%m/%Y"))
+            self._validate_competence_dates(start_field, end_field)
             before = self._search_snapshot(page)
             self._activate_search(page)
             self._confirm_search_refresh(page, before)
             self._competence = competence
             self._search_confirmed = True
         except PortalAdapterError as exc:
-            if exc.category.startswith("SEARCH_"):
+            if exc.category.startswith("SEARCH_") or exc.category == "COMPETENCE_SELECTION_FAILED":
                 raise
             raise PortalAdapterError(
                 "COMPETENCE_SELECTION_FAILED",
@@ -110,7 +111,7 @@ class PlaywrightSocinproSession:
 
     @property
     def navigation_diagnostics(self) -> dict[str, object]:
-        return dict(self._navigation_diagnostics)
+        return {**self._navigation_diagnostics, **self._competence_diagnostics}
 
     def download_statements(self, account: RuntimeAccount) -> Iterable[Path]:
         if not self._competence or not self._search_clicked or not self._search_confirmed:
@@ -287,6 +288,62 @@ class PlaywrightSocinproSession:
     def _set_date(self, field, value: str) -> None:
         field.fill(value)
         field.press("Tab")
+
+    def _date_control(self, page, prefix: str, selectors: list[str]):
+        diagnostics = self._competence_diagnostics
+        try:
+            field = self._first_visible(page, selectors)
+            diagnostics[f"{prefix}_CONTROL_FOUND"] = True
+            try:
+                actionable = field.is_editable()
+            except Exception:
+                actionable = True
+            diagnostics[f"{prefix}_CONTROL_ACTIONABLE"] = bool(actionable)
+            if not actionable:
+                raise self._competence_failure(f"{prefix}_NOT_ACTIONABLE")
+            return field
+        except PortalAdapterError as exc:
+            if exc.category == "COMPETENCE_SELECTION_FAILED":
+                raise
+            raise self._competence_failure(f"{prefix}_CONTROL_NOT_FOUND") from None
+
+    def _set_competence_date(self, field, prefix: str, expected: str) -> None:
+        self._competence_diagnostics[f"{prefix}_SET_ATTEMPTED"] = True
+        try:
+            self._set_date(field, expected)
+        except Exception:
+            raise self._competence_failure(f"{prefix}_SET_FAILED") from None
+
+    def _validate_competence_dates(self, start_field, end_field) -> None:
+        diagnostics = self._competence_diagnostics
+        try:
+            actual_start = start_field.input_value().strip()
+            diagnostics["START_DATE_READBACK_AVAILABLE"] = True
+            diagnostics["ACTUAL_START_DATE"] = actual_start
+        except Exception:
+            raise self._competence_failure("START_DATE_READBACK_FAILED") from None
+        try:
+            actual_end = end_field.input_value().strip()
+            diagnostics["END_DATE_READBACK_AVAILABLE"] = True
+            diagnostics["ACTUAL_END_DATE"] = actual_end
+        except Exception:
+            raise self._competence_failure("END_DATE_READBACK_FAILED") from None
+        diagnostics["START_DATE_MATCH"] = actual_start == diagnostics["EXPECTED_START_DATE"]
+        diagnostics["END_DATE_MATCH"] = actual_end == diagnostics["EXPECTED_END_DATE"]
+        if not diagnostics["START_DATE_MATCH"]:
+            raise self._competence_failure("START_DATE_MISMATCH")
+        if not diagnostics["END_DATE_MATCH"]:
+            raise self._competence_failure("END_DATE_MISMATCH")
+        diagnostics["COMPETENCE_STAGE"] = "COMPETENCE_SELECTION_PASS"
+
+    def _competence_failure(self, reason: str) -> PortalAdapterError:
+        self._competence_diagnostics["COMPETENCE_STAGE"] = "COMPETENCE_SELECTION_FAILED"
+        self._competence_diagnostics["COMPETENCE_FAILURE_REASON"] = reason
+        return PortalAdapterError("COMPETENCE_SELECTION_FAILED", self.navigation_diagnostics)
+
+    @staticmethod
+    def _new_competence_diagnostics(start: str, end: str) -> dict[str, object]:
+        return {"COMPETENCE_STAGE": "COMPETENCE_SELECTION", "START_DATE_CONTROL_FOUND": False, "END_DATE_CONTROL_FOUND": False, "START_DATE_CONTROL_ACTIONABLE": False, "END_DATE_CONTROL_ACTIONABLE": False, "EXPECTED_START_DATE": start, "EXPECTED_END_DATE": end, "START_DATE_SET_ATTEMPTED": False, "END_DATE_SET_ATTEMPTED": False, "START_DATE_READBACK_AVAILABLE": False, "END_DATE_READBACK_AVAILABLE": False, "START_DATE_MATCH": False, "END_DATE_MATCH": False, "COMPETENCE_FAILURE_REASON": None}
 
     def _activate_search(self, page) -> None:
         """Click the visible actionable Pesquisar control, never its text node."""

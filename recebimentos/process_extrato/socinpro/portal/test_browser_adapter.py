@@ -221,7 +221,7 @@ def test_successful_navigation_continues_to_competence_selection(tmp_path):
     session._page = Page()
     start_field, end_field = Field(), Field()
     session._navigate_to_demonstrativo = lambda _page: None
-    session._first_visible = lambda _page, selectors: start_field if "dtInicial" in selectors[0] else end_field
+    session._first_visible = lambda _page, selectors: start_field if any("Inicial" in selector or "inicial" in selector for selector in selectors) else end_field
     session._search_snapshot = lambda _page: ((), "", None)
     session._activate_search = lambda _page: setattr(session, "_search_clicked", True)
     session._confirm_search_refresh = lambda *_args: setattr(session, "_search_confirmed", True)
@@ -380,7 +380,7 @@ def test_select_competence_activates_search_and_confirms_payment_refresh(tmp_pat
         def input_value(self): return self.value
 
     start, end = Field(), Field()
-    session._first_visible = lambda _page, selectors: start if "dtInicial" in selectors[0] else end
+    session._first_visible = lambda _page, selectors: start if any("Inicial" in selector or "inicial" in selector for selector in selectors) else end
     def refresh_payment():
         page.rows = ["25/08/2026 demonstrativo"]
         page.body = "Resultado atualizado"
@@ -395,3 +395,31 @@ def test_select_competence_activates_search_and_confirms_payment_refresh(tmp_pat
     assert session._search_confirmed is True
     session._download = lambda *_args: tmp_path / "synthetic.pdf"
     assert len(tuple(session.download_statements(RuntimeAccount(1, "user", "secret")))) == 2
+
+
+def test_date_control_missing_reports_specific_sanitized_reason(tmp_path):
+    session = PlaywrightSocinproSession(BrowserSettings(tmp_path))
+    session._competence_diagnostics = session._new_competence_diagnostics("01/08/2026", "31/08/2026")
+    session._first_visible = lambda *_args: (_ for _ in ()).throw(PortalAdapterError("UNEXPECTED_PAGE"))
+
+    with pytest.raises(PortalAdapterError, match="COMPETENCE_SELECTION_FAILED") as caught:
+        session._date_control(object(), "START_DATE", ["input[name*='dtInicial' i]"])
+
+    assert caught.value.diagnostics["COMPETENCE_FAILURE_REASON"] == "START_DATE_CONTROL_NOT_FOUND"
+    assert caught.value.diagnostics["START_DATE_CONTROL_FOUND"] is False
+
+
+def test_date_readback_mismatch_blocks_search(tmp_path):
+    session = PlaywrightSocinproSession(BrowserSettings(tmp_path))
+    session._competence_diagnostics = session._new_competence_diagnostics("01/08/2026", "31/08/2026")
+
+    class Field:
+        def __init__(self, value): self.value = value
+        def input_value(self): return self.value
+
+    with pytest.raises(PortalAdapterError, match="COMPETENCE_SELECTION_FAILED") as caught:
+        session._validate_competence_dates(Field("02/08/2026"), Field("31/08/2026"))
+
+    assert caught.value.diagnostics["COMPETENCE_FAILURE_REASON"] == "START_DATE_MISMATCH"
+    assert caught.value.diagnostics["START_DATE_MATCH"] is False
+    assert session._search_clicked is False
