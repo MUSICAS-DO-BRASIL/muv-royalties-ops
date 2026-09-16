@@ -87,7 +87,7 @@ class PlaywrightSocinproSession:
         self._navigation_diagnostics = self._new_navigation_diagnostics(page)
         start, end = competence_date_range(competence)
         self._competence_diagnostics = self._new_competence_diagnostics(start.strftime("%d/%m/%Y"), end.strftime("%d/%m/%Y"))
-        self._search_diagnostics = {"SEARCH_CONTROL_FOUND": False, "SEARCH_ACTIVATION_ATTEMPTED": False, "SEARCH_ACTIVATION_CONFIRMED": False, "SEARCH_RESULT_REFRESH_CONFIRMED": False, "SEARCH_PROOF_METHOD": None, "PRE_SEARCH_ROW_COUNT": 0, "PRE_SEARCH_EMPTY_MARKER_PRESENT": False, "PRE_SEARCH_RESULT_FINGERPRINT": None, "REFRESHED_RESULT_EMPTY": False, "DATE_CONTROLS_SETTLED": False}
+        self._search_diagnostics = {"DATE_MUTATION_COMPLETE": False, "DATE_READBACK_COMPLETE": False, "DATE_CONTROLS_SETTLED": False, "SEARCH_CONTROL_RESOLVED": False, "SEARCH_CONTROL_FOUND": False, "SEARCH_ACTIVATION_ATTEMPTED": False, "SEARCH_ACTIVATION_CONFIRMED": False, "SEARCH_RESULT_REFRESH_CONFIRMED": False, "SEARCH_PROOF_METHOD": None, "PRE_SEARCH_ROW_COUNT": 0, "PRE_SEARCH_EMPTY_MARKER_PRESENT": False, "PRE_SEARCH_RESULT_FINGERPRINT": None, "REFRESHED_RESULT_EMPTY": False}
         self._timing_diagnostics = {key: 0.0 for key in ("DEMONSTRATIVO_CONFIRM_SECONDS", "START_DATE_LOCATOR_SECONDS", "START_DATE_SET_SECONDS", "START_DATE_READBACK_SECONDS", "END_DATE_LOCATOR_SECONDS", "END_DATE_SET_SECONDS", "END_DATE_READBACK_SECONDS", "DATE_VALIDATION_SECONDS", "SEARCH_CONTROL_LOCATOR_SECONDS", "SEARCH_ACTIVATION_SECONDS", "SEARCH_REFRESH_SECONDS", "COMPETENCE_TOTAL_SECONDS")}
         competence_started = time.perf_counter()
         try:
@@ -100,8 +100,10 @@ class PlaywrightSocinproSession:
             start_field = self._date_control(page, "START_DATE", ["input[aria-label*='data inicial' i], input[placeholder*='data inicial' i], input[name*='dtInicial' i], input[id*='dtInicial' i], input[name*='dataInicial' i], input[id*='dataInicial' i]"])
             end_field = self._date_control(page, "END_DATE", ["input[aria-label*='data final' i], input[placeholder*='data final' i], input[name*='dtFinal' i], input[id*='dtFinal' i], input[name*='dataFinal' i], input[id*='dataFinal' i]"])
             self._set_competence_date(end_field, "END_DATE", end.strftime("%d/%m/%Y"))
+            self._settle_date_control(end_field, "END_DATE")
             self._set_competence_date(start_field, "START_DATE", start.strftime("%d/%m/%Y"))
-            self._settle_date_controls(page, start_field, end_field)
+            self._settle_date_control(start_field, "START_DATE")
+            self._dismiss_date_overlays(start_field, end_field)
             self._validate_competence_dates(start_field, end_field)
             before = self._search_snapshot(page)
             self._record_pre_search_state(before)
@@ -385,6 +387,8 @@ class PlaywrightSocinproSession:
         if not diagnostics["END_DATE_MATCH"]:
             raise self._competence_failure("END_DATE_MISMATCH")
         diagnostics["COMPETENCE_STAGE"] = "COMPETENCE_SELECTION_PASS"
+        self._search_diagnostics["DATE_READBACK_COMPLETE"] = True
+        self._search_diagnostics["DATE_CONTROLS_SETTLED"] = diagnostics["DATE_RANGE_VALIDATION"]
         self._timing_diagnostics["DATE_VALIDATION_SECONDS"] = round(time.perf_counter() - started, 6)
 
     def _competence_failure(self, reason: str) -> PortalAdapterError:
@@ -396,17 +400,22 @@ class PlaywrightSocinproSession:
     def _new_competence_diagnostics(start: str, end: str) -> dict[str, object]:
         return {"COMPETENCE_STAGE": "COMPETENCE_SELECTION", "START_DATE_CONTROL_FOUND": False, "END_DATE_CONTROL_FOUND": False, "START_DATE_CONTROL_ACTIONABLE": False, "END_DATE_CONTROL_ACTIONABLE": False, "EXPECTED_START_DATE": start, "EXPECTED_END_DATE": end, "START_DATE_SET_ATTEMPTED": False, "END_DATE_SET_ATTEMPTED": False, "START_DATE_VALUE_AFTER_MUTATION": None, "END_DATE_VALUE_AFTER_MUTATION": None, "START_DATE_VALUE_AFTER_BLUR": None, "END_DATE_VALUE_AFTER_BLUR": None, "START_DATE_READBACK_AVAILABLE": False, "END_DATE_READBACK_AVAILABLE": False, "START_DATE_MATCH": False, "END_DATE_MATCH": False, "DATE_RANGE_VALIDATION": False, "COMPETENCE_FAILURE_REASON": None}
 
-    def _settle_date_controls(self, page, start_field, end_field) -> None:
-        """Close PrimeFaces calendar overlays before the search action."""
+    def _settle_date_control(self, field, prefix: str) -> None:
+        """Commit a date widget without using Enter or implicit form submission."""
         try:
-            start_field.press("Escape")
-            end_field.press("Escape")
-            overlay_count = page.locator(".ui-datepicker:visible, .ui-calendar-panel:visible").count()
+            field.press("Escape")
+            actual = field.input_value().strip()
         except Exception:
-            overlay_count = 0
-        self._search_diagnostics["DATE_CONTROLS_SETTLED"] = overlay_count == 0
-        if overlay_count:
-            raise self._competence_failure("DATE_CONTROLS_NOT_SETTLED")
+            raise self._competence_failure(f"{prefix}_SETTLE_READBACK_FAILED") from None
+        if actual != self._competence_diagnostics[f"EXPECTED_{prefix}"]:
+            raise self._competence_failure(f"{prefix}_SETTLE_MISMATCH")
+        self._search_diagnostics["DATE_MUTATION_COMPLETE"] = True
+
+    @staticmethod
+    def _dismiss_date_overlays(start_field, end_field) -> None:
+        """Dismiss PrimeFaces overlays normally; final value readback is authoritative."""
+        start_field.press("Escape")
+        end_field.press("Escape")
 
     def _activate_search(self, page) -> None:
         """Click the visible actionable Pesquisar control, never its text node."""
@@ -425,6 +434,7 @@ class PlaywrightSocinproSession:
                 control = candidate.first
                 control.wait_for(state="visible", timeout=SEARCH_CONTROL_TIMEOUT_MS)
                 self._search_diagnostics["SEARCH_CONTROL_FOUND"] = True
+                self._search_diagnostics["SEARCH_CONTROL_RESOLVED"] = True
                 self._timing_diagnostics["SEARCH_CONTROL_LOCATOR_SECONDS"] = round(time.perf_counter() - started, 6)
                 if not control.is_enabled():
                     continue

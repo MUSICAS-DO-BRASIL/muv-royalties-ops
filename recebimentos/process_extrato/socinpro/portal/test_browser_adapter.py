@@ -472,23 +472,53 @@ def test_search_waits_are_bounded_below_a_multi_minute_path():
     assert SEARCH_CONTROL_TIMEOUT_MS * 5 + SEARCH_REFRESH_TIMEOUT_MS < 30_000
 
 
-def test_open_primefaces_calendar_overlay_blocks_search_until_settled(tmp_path):
-    class Overlay:
-        def count(self):
-            return 1
-
-    class Page:
-        def locator(self, _selector):
-            return Overlay()
-
+def test_open_primefaces_calendar_overlay_is_dismissed_without_blocking_direct_readback(tmp_path):
     session = PlaywrightSocinproSession(BrowserSettings(tmp_path))
     session._competence_diagnostics = session._new_competence_diagnostics("01/08/2026", "31/08/2026")
+    start, end = PrimeFacesDateField("01/08/2026"), PrimeFacesDateField("31/08/2026")
 
-    with pytest.raises(PortalAdapterError, match="COMPETENCE_SELECTION_FAILED") as caught:
-        session._settle_date_controls(Page(), PrimeFacesDateField("01/08/2026"), PrimeFacesDateField("31/08/2026"))
+    session._settle_date_control(end, "END_DATE")
+    session._settle_date_control(start, "START_DATE")
+    session._dismiss_date_overlays(start, end)
+    session._validate_competence_dates(start, end)
 
-    assert caught.value.diagnostics["COMPETENCE_FAILURE_REASON"] == "DATE_CONTROLS_NOT_SETTLED"
-    assert session._search_diagnostics["DATE_CONTROLS_SETTLED"] is False
+    assert start.events.count("press:Escape") == 2
+    assert end.events.count("press:Escape") == 2
+    assert session._search_diagnostics["DATE_CONTROLS_SETTLED"] is True
+
+
+def test_date_handoff_with_open_overlay_keeps_search_eligible_after_final_readback(tmp_path):
+    start, end = PrimeFacesDateField("17/08/2026"), PrimeFacesDateField("16/09/2026")
+    session, page = _synthetic_date_selection_session(tmp_path, start, end)
+    page.control = SearchControl(lambda: setattr(page, "markup", "<tr><td>refreshed</td></tr>"))
+
+    session.select_competence("2026-08")
+
+    assert (start.value, end.value) == ("01/08/2026", "31/08/2026")
+    assert session._search_diagnostics["DATE_READBACK_COMPLETE"] is True
+    assert session._search_diagnostics["DATE_CONTROLS_SETTLED"] is True
+    assert session._search_clicked is True
+
+
+def test_date_keyboard_path_never_uses_enter_or_implicitly_submits_search(tmp_path):
+    class SubmitOnEnterField(PrimeFacesDateField):
+        def __init__(self, value):
+            super().__init__(value)
+            self.submit_count = 0
+
+        def press(self, key):
+            if key == "Enter":
+                self.submit_count += 1
+            super().press(key)
+
+    field = SubmitOnEnterField("17/08/2026")
+    session = PlaywrightSocinproSession(BrowserSettings(tmp_path))
+
+    session._set_date(field, "01/08/2026")
+
+    assert field.submit_count == 0
+    assert "press:Enter" not in field.events
+    assert session._search_clicked is False
 
 
 def test_pre_search_empty_state_cannot_authorize_no_payment(tmp_path):
@@ -624,7 +654,7 @@ def test_start_date_reversion_after_blur_is_detected_before_search(tmp_path):
 
 
 def test_final_both_date_readback_blocks_search_after_late_start_reversion(tmp_path):
-    start = PrimeFacesDateField("17/08/2026", readbacks=["01/08/2026", "01/08/2026", "17/08/2026"])
+    start = PrimeFacesDateField("17/08/2026", readbacks=["01/08/2026", "01/08/2026", "01/08/2026", "17/08/2026"])
     end = PrimeFacesDateField("16/09/2026")
     session, page = _synthetic_date_selection_session(tmp_path, start, end)
     page.control = SearchControl()
