@@ -2,7 +2,14 @@ from pathlib import Path
 
 import pytest
 
-from socinpro.portal.browser_adapter import BrowserSettings, PlaywrightSocinproSession, PortalAdapterError, competence_date_range
+from socinpro.portal.browser_adapter import (
+    DEMONSTRATIVO_PATH,
+    DEMONSTRATIVO_URL,
+    BrowserSettings,
+    PlaywrightSocinproSession,
+    PortalAdapterError,
+    competence_date_range,
+)
 from socinpro.portal_runtime import HumanInterventionRequired, RuntimeAccount
 
 
@@ -34,6 +41,18 @@ class FakePage:
 
     def locator(self, _selector):
         return FakeLocator(self.text, self.count)
+
+
+class AuthenticatedNavigationPage(FakePage):
+    def __init__(self, final_url, text="Demonstrativo SOCINPRO"):
+        super().__init__(text)
+        self.url = "https://associado.socinpro.org.br/portal-web/pages/protected/home.xhtml"
+        self.final_url = final_url
+        self.goto_calls = []
+
+    def goto(self, url, **kwargs):
+        self.goto_calls.append((url, kwargs))
+        self.url = self.final_url
 
 
 @pytest.mark.parametrize(
@@ -115,3 +134,91 @@ def test_download_is_saved_only_to_caller_staging_root(tmp_path):
     path = session._download(Page(), RuntimeAccount(1, "user", "secret"), "analitico", ["button"])
     assert path.parent == staging
     assert path.name == "portal-original.pdf"
+
+
+def test_navigation_uses_authenticated_demonstrativo_route_and_verifies_page(tmp_path):
+    page = AuthenticatedNavigationPage(f"https://associado.socinpro.org.br{DEMONSTRATIVO_PATH}?cid=synthetic")
+    session = PlaywrightSocinproSession(BrowserSettings(tmp_path))
+
+    session._navigate_to_demonstrativo(page)
+
+    assert page.goto_calls == [(DEMONSTRATIVO_URL, {"wait_until": "domcontentloaded", "timeout": session.settings.timeout_ms})]
+
+
+@pytest.mark.parametrize(
+    ("final_url", "text"),
+    [
+        ("https://associado.socinpro.org.br/portal-web/pages/public/access/login.xhtml", "Entrar"),
+        (f"https://associado.socinpro.org.br{DEMONSTRATIVO_PATH}", "Página financeira"),
+    ],
+)
+def test_navigation_rejects_redirect_or_non_demonstrativo_page(tmp_path, final_url, text):
+    session = PlaywrightSocinproSession(BrowserSettings(tmp_path))
+
+    with pytest.raises(PortalAdapterError, match="POST_LOGIN_NAVIGATION_FAILED"):
+        session._navigate_to_demonstrativo(AuthenticatedNavigationPage(final_url, text))
+
+
+def test_navigation_failure_has_sanitized_post_login_diagnostics(tmp_path):
+    credential_value = "credential-value-that-must-not-appear"
+    page = AuthenticatedNavigationPage("https://associado.socinpro.org.br/portal-web/pages/public/access/login.xhtml", text=f"raw html {credential_value} cookie token R$ 999")
+    session = PlaywrightSocinproSession(BrowserSettings(tmp_path))
+
+    with pytest.raises(PortalAdapterError, match="POST_LOGIN_NAVIGATION_FAILED") as caught:
+        session._navigate_to_demonstrativo(page)
+
+    diagnostics = caught.value.diagnostics
+    assert diagnostics == {
+        "PORTAL_STAGE": "POST_LOGIN_NAVIGATION",
+        "NAV_FINANCEIRO_FOUND": False,
+        "NAV_FINANCEIRO_ACTIVATED": False,
+        "NAV_SOCINPRO_FOUND": False,
+        "NAV_SOCINPRO_ACTIVATED": False,
+        "NAV_DEMONSTRATIVO_FOUND": False,
+        "NAV_DEMONSTRATIVO_ACTIVATED": False,
+        "DEMONSTRATIVO_PAGE_CONFIRMED": False,
+        "CURRENT_URL_CLASS": "OTHER",
+        "LAYOUT_FAILURE_REASON": "TARGET_PAGE_NOT_CONFIRMED",
+    }
+    assert credential_value not in repr(diagnostics)
+    assert all(secret not in repr(diagnostics).casefold() for secret in ("cookie", "token", "raw html", "r$ 999"))
+
+
+def test_navigation_failure_is_not_misclassified_as_competence_failure(tmp_path):
+    session = PlaywrightSocinproSession(BrowserSettings(tmp_path))
+    session._page = object()
+    session._navigate_to_demonstrativo = lambda _page: (_ for _ in ()).throw(
+        PortalAdapterError("POST_LOGIN_NAVIGATION_FAILED", {"PORTAL_STAGE": "POST_LOGIN_NAVIGATION"})
+    )
+
+    with pytest.raises(PortalAdapterError, match="POST_LOGIN_NAVIGATION_FAILED") as caught:
+        session.select_competence("2026-08")
+
+    assert caught.value.category == "POST_LOGIN_NAVIGATION_FAILED"
+
+
+def test_successful_navigation_continues_to_competence_selection(tmp_path):
+    class Page:
+        def locator(self, _selector):
+            class Rows:
+                def all_inner_texts(self): return []
+            return Rows()
+
+    class Field:
+        def __init__(self): self.value = ""
+        def fill(self, value): self.value = value
+        def press(self, _key): return None
+        def input_value(self): return self.value
+
+    session = PlaywrightSocinproSession(BrowserSettings(tmp_path))
+    session._page = Page()
+    start_field, end_field = Field(), Field()
+    session._navigate_to_demonstrativo = lambda _page: None
+    session._first_visible = lambda _page, selectors: start_field if "dtInicial" in selectors[0] else end_field
+    session._click_text = lambda _page, labels: labels == ["Pesquisar"]
+    session._confirm_search_refresh = lambda *_args: None
+
+    session.select_competence("2026-08")
+
+    assert (start_field.value, end_field.value) == ("01/08/2026", "31/08/2026")
+    assert session._search_confirmed is True

@@ -62,3 +62,23 @@ def test_start_beyond_accounts_fails_before_browser(monkeypatch, tmp_path):
     monkeypatch.setattr(smoke_runner, "preflight_runtime_credentials", lambda _entity: SimpleNamespace(accounts=(SimpleNamespace(index=1, masked_identifier="id#1"),)))
     args = argparse.Namespace(entity="HM", competence="2026-08", account_limit=1, start_at=2, max_accounts=1, stop_after_first_download=False, staging_root=tmp_path, browser_executable=None)
     assert smoke_runner.run_smoke(args)["SOCINPRO_REAL_SMOKE_STATUS"] == "SMOKE_START_AT_OUT_OF_RANGE"
+
+
+def test_smoke_runner_returns_only_sanitized_navigation_diagnostics(monkeypatch, tmp_path):
+    account = SimpleNamespace(index=1, masked_identifier="id#synthetic")
+    monkeypatch.setattr(smoke_runner, "preflight_runtime_credentials", lambda _entity: SimpleNamespace(accounts=(account,)))
+
+    class Session:
+        def __init__(self, _settings): pass
+        def authenticate(self, _account): pass
+        def select_competence(self, _competence):
+            raise smoke_runner.PortalAdapterError("POST_LOGIN_NAVIGATION_FAILED", {"PORTAL_STAGE": "POST_LOGIN_NAVIGATION", "LAYOUT_FAILURE_REASON": "TARGET_PAGE_NOT_CONFIRMED"})
+        def close(self): pass
+
+    monkeypatch.setattr(smoke_runner, "PlaywrightSocinproSession", Session)
+    args = argparse.Namespace(entity="HM", competence="2026-08", account_limit=1, start_at=1, max_accounts=None, stop_after_first_download=False, staging_root=tmp_path, browser_executable=None)
+    result = smoke_runner.run_smoke(args)
+
+    account_result = result["ACCOUNT_RESULTS"][0]
+    assert account_result["status"] == "PORTAL_LAYOUT_REVIEW"
+    assert account_result["navigation_diagnostics"] == {"PORTAL_STAGE": "POST_LOGIN_NAVIGATION", "LAYOUT_FAILURE_REASON": "TARGET_PAGE_NOT_CONFIRMED"}

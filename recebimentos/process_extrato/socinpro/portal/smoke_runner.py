@@ -76,7 +76,7 @@ def run_smoke(args: argparse.Namespace) -> dict[str, object]:
         result["PLANNED_ACCOUNT_START"], result["PLANNED_ACCOUNT_END"], result["PLANNED_ACCOUNT_COUNT"] = planned[0].index, planned[-1].index, len(planned)
         all_files: set[str] = set()
         for account in planned:
-            account_result = {"account_index": account.index, "masked_identifier": account.masked_identifier, "status": "FAILED", "login_seconds": 0.0, "navigation_seconds": 0.0, "download_seconds": 0.0, "download_count": 0, "captcha_detected": False, "mfa_detected": False, "session_cleanup": "NOT_RUN"}
+            account_result = {"account_index": account.index, "masked_identifier": account.masked_identifier, "status": "FAILED", "login_seconds": 0.0, "navigation_seconds": 0.0, "download_seconds": 0.0, "download_count": 0, "captcha_detected": False, "mfa_detected": False, "navigation_diagnostics": {}, "session_cleanup": "NOT_RUN"}
             session = PlaywrightSocinproSession(BrowserSettings(staging_dir=staging, headed=True, executable_path=args.browser_executable))
             result["ACCOUNTS_ATTEMPTED"] += 1
             try:
@@ -94,7 +94,8 @@ def run_smoke(args: argparse.Namespace) -> dict[str, object]:
             except HumanInterventionRequired as exc:
                 account_result["status"] = "WAITING_HUMAN"; account_result["captcha_detected"] = exc.category == "CAPTCHA_REQUIRED"; account_result["mfa_detected"] = exc.category == "MFA_REQUIRED"; result["ACCOUNTS_WAITING_HUMAN"] += 1
             except PortalAdapterError as exc:
-                account_result["status"] = "PORTAL_LAYOUT_REVIEW" if exc.category in {"UNEXPECTED_PAGE", "COMPETENCE_SELECTION_FAILED", "DOCUMENT_DISCOVERY_FAILED"} else "FAILED"; result["ACCOUNTS_FAILED"] += 1
+                account_result["navigation_diagnostics"] = exc.diagnostics
+                account_result["status"] = "PORTAL_LAYOUT_REVIEW" if exc.category in {"UNEXPECTED_PAGE", "POST_LOGIN_NAVIGATION_FAILED", "DOCUMENT_DISCOVERY_FAILED"} else "FAILED"; result["ACCOUNTS_FAILED"] += 1
             finally:
                 try: session.close(); account_result["session_cleanup"] = "PASS"
                 except Exception: account_result["session_cleanup"] = "FAIL"

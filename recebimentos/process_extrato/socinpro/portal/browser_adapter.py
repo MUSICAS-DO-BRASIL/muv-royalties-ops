@@ -14,19 +14,23 @@ from pathlib import Path
 import re
 import time
 from typing import Iterable
+from urllib.parse import urlparse
 
 from ..portal_runtime import HumanInterventionRequired, RuntimeAccount, SocinproPortalRuntimeError
 
 LOGGER = logging.getLogger(__name__)
 LOGIN_URL = "https://associado.socinpro.org.br/portal-web/pages/public/access/login.xhtml"
+DEMONSTRATIVO_PATH = "/portal-web/pages/protected/financeiro/demonstrativo-socinpro.xhtml"
+DEMONSTRATIVO_URL = f"https://associado.socinpro.org.br{DEMONSTRATIVO_PATH}"
 
 
 class PortalAdapterError(SocinproPortalRuntimeError):
     """Categorised portal error; its text deliberately omits secret values."""
 
-    def __init__(self, category: str):
+    def __init__(self, category: str, diagnostics: dict[str, object] | None = None):
         super().__init__(category)
         self.category = category
+        self.diagnostics = dict(diagnostics or {})
 
 
 @dataclass(frozen=True)
@@ -71,9 +75,12 @@ class PlaywrightSocinproSession:
         page = self._require_page()
         start, end = competence_date_range(competence)
         try:
-            self._click_text(page, ["Financeiro"])
-            self._click_text(page, ["Socinpro", "SOCINPRO"])
-            self._click_text(page, ["Demonstrativo"])
+            self._navigate_to_demonstrativo(page)
+        except PortalAdapterError:
+            # Navigation is a separate, pre-date-selection state. Do not
+            # collapse a portal layout failure into a competence failure.
+            raise
+        try:
             start_field = self._first_visible(page, ["input[id*='dtInicial']", "input[name*='dtInicial']"])
             end_field = self._first_visible(page, ["input[id*='dtFinal']", "input[name*='dtFinal']"])
             self._set_date(start_field, start.strftime("%d/%m/%Y"))
@@ -184,6 +191,70 @@ class PlaywrightSocinproSession:
                 except Exception:
                     continue
         raise PortalAdapterError("UNEXPECTED_PAGE")
+
+    def _navigate_to_demonstrativo(self, page) -> None:
+        """Open the authenticated Demonstrativo endpoint and confirm its page identity.
+
+        The legacy menu helper matched the broad word ``Socinpro`` rather than
+        the actual ``Distribuição SOCINPRO`` entry.  Its generated JSF markup
+        makes that intermediate menu unstable.  The protected route is stable,
+        requires the already-authenticated context, and avoids generated IDs.
+        """
+        diagnostics = self._new_navigation_diagnostics(page)
+        try:
+            page.goto(DEMONSTRATIVO_URL, wait_until="domcontentloaded", timeout=self.settings.timeout_ms)
+            self._verify_demonstrativo_page(page, diagnostics)
+        except Exception as exc:
+            if isinstance(exc, PortalAdapterError) and exc.category == "POST_LOGIN_NAVIGATION_FAILED":
+                raise
+            diagnostics["CURRENT_URL_CLASS"] = self._url_class(page)
+            diagnostics["LAYOUT_FAILURE_REASON"] = self._navigation_failure_reason(exc)
+            raise PortalAdapterError("POST_LOGIN_NAVIGATION_FAILED", diagnostics) from None
+
+    def _verify_demonstrativo_page(self, page, diagnostics: dict[str, object]) -> None:
+        current_path = urlparse(page.url).path
+        if current_path != DEMONSTRATIVO_PATH:
+            raise PortalAdapterError("UNEXPECTED_PAGE")
+        try:
+            body = page.locator("body").inner_text(timeout=self.settings.timeout_ms).casefold()
+        except Exception as exc:
+            raise PortalAdapterError("UNEXPECTED_PAGE") from exc
+        if "demonstrativo" not in body:
+            raise PortalAdapterError("UNEXPECTED_PAGE")
+        diagnostics["DEMONSTRATIVO_PAGE_CONFIRMED"] = True
+        diagnostics["CURRENT_URL_CLASS"] = "DEMONSTRATIVO_PAGE"
+
+    @staticmethod
+    def _new_navigation_diagnostics(page) -> dict[str, object]:
+        return {
+            "PORTAL_STAGE": "POST_LOGIN_NAVIGATION",
+            "NAV_FINANCEIRO_FOUND": False,
+            "NAV_FINANCEIRO_ACTIVATED": False,
+            "NAV_SOCINPRO_FOUND": False,
+            "NAV_SOCINPRO_ACTIVATED": False,
+            "NAV_DEMONSTRATIVO_FOUND": False,
+            "NAV_DEMONSTRATIVO_ACTIVATED": False,
+            "DEMONSTRATIVO_PAGE_CONFIRMED": False,
+            "CURRENT_URL_CLASS": PlaywrightSocinproSession._url_class(page),
+            "LAYOUT_FAILURE_REASON": None,
+        }
+
+    @staticmethod
+    def _url_class(page) -> str:
+        path = urlparse(str(getattr(page, "url", ""))).path.casefold()
+        if path == DEMONSTRATIVO_PATH:
+            return "DEMONSTRATIVO_PAGE"
+        if "/pages/protected/financeiro/" in path:
+            return "FINANCEIRO_AREA"
+        if "/pages/protected/" in path:
+            return "AUTHENTICATED_HOME" if path.rstrip("/").endswith("/home.xhtml") else "UNKNOWN_AUTHENTICATED_PAGE"
+        return "OTHER"
+
+    @staticmethod
+    def _navigation_failure_reason(exc: Exception) -> str:
+        if isinstance(exc, PortalAdapterError) and exc.category == "UNEXPECTED_PAGE":
+            return "TARGET_PAGE_NOT_CONFIRMED"
+        return "TARGET_ROUTE_UNAVAILABLE"
 
     def _set_date(self, field, value: str) -> None:
         field.fill(value)
