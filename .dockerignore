@@ -46,3 +46,7 @@
 **/logs
 **/technical_artifacts
 **/runs
+
+# Unused source-tree docs/examples; tests generate their own synthetic mappings.
+**/*.md
+**/*.json
