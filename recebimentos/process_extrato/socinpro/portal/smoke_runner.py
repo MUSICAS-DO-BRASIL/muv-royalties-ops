@@ -29,6 +29,7 @@ _DIAGNOSTIC_KEYS = {
     "START_DATE_READBACK_AVAILABLE", "END_DATE_READBACK_AVAILABLE", "START_DATE_MATCH",
     "END_DATE_MATCH", "COMPETENCE_FAILURE_REASON", "ACTUAL_START_DATE", "ACTUAL_END_DATE",
     "SEARCH_CONTROL_FOUND", "SEARCH_ACTIVATION_ATTEMPTED", "SEARCH_ACTIVATION_CONFIRMED", "SEARCH_RESULT_REFRESH_CONFIRMED", "REFRESHED_RESULT_EMPTY",
+    "DEMONSTRATIVO_CONFIRM_SECONDS", "START_DATE_LOCATOR_SECONDS", "START_DATE_SET_SECONDS", "START_DATE_READBACK_SECONDS", "END_DATE_LOCATOR_SECONDS", "END_DATE_SET_SECONDS", "END_DATE_READBACK_SECONDS", "DATE_VALIDATION_SECONDS", "SEARCH_CONTROL_LOCATOR_SECONDS", "SEARCH_ACTIVATION_SECONDS", "SEARCH_REFRESH_SECONDS", "COMPETENCE_TOTAL_SECONDS",
 }
 
 
@@ -37,7 +38,7 @@ def _safe_navigation_diagnostics(session, fallback_stage: str | None = None, err
     source = error_diagnostics if isinstance(error_diagnostics, dict) else getattr(session, "navigation_diagnostics", {})
     if not isinstance(source, dict):
         source = {}
-    diagnostics = {key: value for key, value in source.items() if key in _DIAGNOSTIC_KEYS and isinstance(value, (str, bool, type(None)))}
+    diagnostics = {key: value for key, value in source.items() if key in _DIAGNOSTIC_KEYS and isinstance(value, (str, bool, int, float, type(None)))}
     if diagnostics or fallback_stage is None:
         return diagnostics
     return {

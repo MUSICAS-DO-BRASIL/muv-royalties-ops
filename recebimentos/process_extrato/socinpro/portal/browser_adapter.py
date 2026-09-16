@@ -57,6 +57,7 @@ class PlaywrightSocinproSession:
         self._navigation_diagnostics: dict[str, object] = {}
         self._competence_diagnostics: dict[str, object] = {}
         self._search_diagnostics: dict[str, object] = {}
+        self._timing_diagnostics: dict[str, float] = {}
         self.browser_started = False
 
     def authenticate(self, account: RuntimeAccount) -> None:
@@ -81,6 +82,8 @@ class PlaywrightSocinproSession:
         start, end = competence_date_range(competence)
         self._competence_diagnostics = self._new_competence_diagnostics(start.strftime("%d/%m/%Y"), end.strftime("%d/%m/%Y"))
         self._search_diagnostics = {"SEARCH_CONTROL_FOUND": False, "SEARCH_ACTIVATION_ATTEMPTED": False, "SEARCH_ACTIVATION_CONFIRMED": False, "SEARCH_RESULT_REFRESH_CONFIRMED": False, "REFRESHED_RESULT_EMPTY": False}
+        self._timing_diagnostics = {key: 0.0 for key in ("DEMONSTRATIVO_CONFIRM_SECONDS", "START_DATE_LOCATOR_SECONDS", "START_DATE_SET_SECONDS", "START_DATE_READBACK_SECONDS", "END_DATE_LOCATOR_SECONDS", "END_DATE_SET_SECONDS", "END_DATE_READBACK_SECONDS", "DATE_VALIDATION_SECONDS", "SEARCH_CONTROL_LOCATOR_SECONDS", "SEARCH_ACTIVATION_SECONDS", "SEARCH_REFRESH_SECONDS", "COMPETENCE_TOTAL_SECONDS")}
+        competence_started = time.perf_counter()
         try:
             self._navigate_to_demonstrativo(page)
         except PortalAdapterError:
@@ -98,6 +101,7 @@ class PlaywrightSocinproSession:
             self._confirm_search_refresh(page, before)
             self._competence = competence
             self._search_confirmed = True
+            self._timing_diagnostics["COMPETENCE_TOTAL_SECONDS"] = round(time.perf_counter() - competence_started, 6)
         except PortalAdapterError as exc:
             if exc.category.startswith("SEARCH_") or exc.category == "COMPETENCE_SELECTION_FAILED":
                 raise
@@ -113,7 +117,7 @@ class PlaywrightSocinproSession:
 
     @property
     def navigation_diagnostics(self) -> dict[str, object]:
-        return {**self._navigation_diagnostics, **self._competence_diagnostics, **self._search_diagnostics}
+        return {**self._navigation_diagnostics, **self._competence_diagnostics, **self._search_diagnostics, **self._timing_diagnostics}
 
     def download_statements(self, account: RuntimeAccount) -> Iterable[Path]:
         required_search = ("SEARCH_CONTROL_FOUND", "SEARCH_ACTIVATION_ATTEMPTED", "SEARCH_ACTIVATION_CONFIRMED", "SEARCH_RESULT_REFRESH_CONFIRMED")
@@ -293,6 +297,7 @@ class PlaywrightSocinproSession:
         field.press("Tab")
 
     def _date_control(self, page, prefix: str, selectors: list[str]):
+        started = time.perf_counter()
         diagnostics = self._competence_diagnostics
         try:
             field = self._first_visible(page, selectors)
@@ -309,24 +314,34 @@ class PlaywrightSocinproSession:
             if exc.category == "COMPETENCE_SELECTION_FAILED":
                 raise
             raise self._competence_failure(f"{prefix}_CONTROL_NOT_FOUND") from None
+        finally:
+            self._timing_diagnostics[f"{prefix}_LOCATOR_SECONDS"] = round(time.perf_counter() - started, 6)
 
     def _set_competence_date(self, field, prefix: str, expected: str) -> None:
+        started = time.perf_counter()
         self._competence_diagnostics[f"{prefix}_SET_ATTEMPTED"] = True
         try:
             self._set_date(field, expected)
         except Exception:
             raise self._competence_failure(f"{prefix}_SET_FAILED") from None
+        finally:
+            self._timing_diagnostics[f"{prefix}_SET_SECONDS"] = round(time.perf_counter() - started, 6)
 
     def _validate_competence_dates(self, start_field, end_field) -> None:
+        started = time.perf_counter()
         diagnostics = self._competence_diagnostics
         try:
+            readback_started = time.perf_counter()
             actual_start = start_field.input_value().strip()
+            self._timing_diagnostics["START_DATE_READBACK_SECONDS"] = round(time.perf_counter() - readback_started, 6)
             diagnostics["START_DATE_READBACK_AVAILABLE"] = True
             diagnostics["ACTUAL_START_DATE"] = actual_start
         except Exception:
             raise self._competence_failure("START_DATE_READBACK_FAILED") from None
         try:
+            readback_started = time.perf_counter()
             actual_end = end_field.input_value().strip()
+            self._timing_diagnostics["END_DATE_READBACK_SECONDS"] = round(time.perf_counter() - readback_started, 6)
             diagnostics["END_DATE_READBACK_AVAILABLE"] = True
             diagnostics["ACTUAL_END_DATE"] = actual_end
         except Exception:
@@ -338,6 +353,7 @@ class PlaywrightSocinproSession:
         if not diagnostics["END_DATE_MATCH"]:
             raise self._competence_failure("END_DATE_MISMATCH")
         diagnostics["COMPETENCE_STAGE"] = "COMPETENCE_SELECTION_PASS"
+        self._timing_diagnostics["DATE_VALIDATION_SECONDS"] = round(time.perf_counter() - started, 6)
 
     def _competence_failure(self, reason: str) -> PortalAdapterError:
         self._competence_diagnostics["COMPETENCE_STAGE"] = "COMPETENCE_SELECTION_FAILED"
