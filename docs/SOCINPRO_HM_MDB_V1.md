@@ -15,9 +15,10 @@ credential, mapping, production document, or financial output was copied.
 The V1 clean-repository input is a reviewed extracted row, represented by
 `SocinproPayment`: entity, competence, payment date, titular, source code,
 gross value, source identity and immutable original evidence/reference.
-`Decimal` is canonical. Extraction adapters for real SOCINPRO PDF/portal
-layouts are intentionally not included: they require reviewed fixtures and
-approved external mappings before controlled operation.
+`Decimal` is canonical. Controlled ingestion supports reviewed textual
+SOCINPRO payment PDFs and reviewed `pagamentos` workbooks. Portal access
+remains outside this repository: where needed, a person downloads the source
+and supplies it to the controlled ingestion boundary.
 
 HM and MDB use one core. Their explicit bank adapters are BTG and Safra,
 respectively, through an already validated `BankReference`; this module does
@@ -67,3 +68,13 @@ Supported source types are intentionally limited to `SOCINPRO_PAYMENT_PDF`
 (textual payment demonstrativo) and `SOCINPRO_PAYMENT_WORKBOOK` (legacy
 `pagamentos` projection). Portal automation is not required for a controlled
 run: a human may download the input and provide it to the parser.
+
+## Historical acceptance
+
+The HM July 2026 historical replay passed against the approved monthly close
+in a temporary, read-only workflow. It reproduced the approved documentary,
+bank and catalogue totals with no historical publication or catalogue change.
+The historical mapping used for that replay remains external runtime
+configuration and is never committed. This establishes a golden baseline for
+the next unclosed competence; it does not authorize republishing a closed
+month. Portal acquisition remains human-in-the-loop when required.
