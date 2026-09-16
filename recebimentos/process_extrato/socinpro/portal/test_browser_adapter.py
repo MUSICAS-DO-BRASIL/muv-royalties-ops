@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from socinpro.portal.browser_adapter import BrowserSettings, PlaywrightSocinproSession, PortalAdapterError
+from socinpro.portal.browser_adapter import BrowserSettings, PlaywrightSocinproSession, PortalAdapterError, competence_date_range
 from socinpro.portal_runtime import HumanInterventionRequired, RuntimeAccount
 
 
@@ -61,6 +61,7 @@ def test_no_payment_and_unexpected_page_are_distinct(tmp_path):
     session = PlaywrightSocinproSession(BrowserSettings(tmp_path))
     session._page = FakePage("Nenhum demonstrativo")
     session._competence = "2026-08"
+    session._search_confirmed = True
     assert tuple(session.download_statements(RuntimeAccount(1, "user", "secret"))) == ()
 
     session._page = FakePage("layout sem tabela", count=1)
@@ -86,6 +87,12 @@ def test_download_timeout_is_categorised(tmp_path):
     session._first_visible = lambda *_args: object()
     with pytest.raises(PortalAdapterError, match="DOWNLOAD_TIMEOUT"):
         session._download(BrokenDownloadPage(), RuntimeAccount(1, "user", "secret"), "analitico", ["button"])
+
+
+@pytest.mark.parametrize(("competence", "start", "end"), [("2026-08", "01/08/2026", "31/08/2026"), ("2026-09", "01/09/2026", "30/09/2026"), ("2026-02", "01/02/2026", "28/02/2026"), ("2028-02", "01/02/2028", "29/02/2028"), ("2026-12", "01/12/2026", "31/12/2026")])
+def test_exact_competence_month_boundaries(competence, start, end):
+    actual_start, actual_end = competence_date_range(competence)
+    assert actual_start.strftime("%d/%m/%Y") == start and actual_end.strftime("%d/%m/%Y") == end
 
 
 def test_download_is_saved_only_to_caller_staging_root(tmp_path):

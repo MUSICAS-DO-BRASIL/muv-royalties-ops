@@ -48,6 +48,7 @@ class PlaywrightSocinproSession:
         self._context = None
         self._page = None
         self._competence: str | None = None
+        self._search_confirmed = False
         self.browser_started = False
 
     def authenticate(self, account: RuntimeAccount) -> None:
@@ -68,23 +69,27 @@ class PlaywrightSocinproSession:
         if not re.fullmatch(r"\d{4}-\d{2}", competence):
             raise PortalAdapterError("COMPETENCE_INVALID")
         page = self._require_page()
-        year, month = map(int, competence.split("-"))
-        if not 1 <= month <= 12:
-            raise PortalAdapterError("COMPETENCE_INVALID")
+        start, end = competence_date_range(competence)
         try:
             self._click_text(page, ["Financeiro"])
             self._click_text(page, ["Socinpro", "SOCINPRO"])
             self._click_text(page, ["Demonstrativo"])
-            start, end = date(year, month, 1), date(year, month, calendar.monthrange(year, month)[1])
-            self._first_visible(page, ["input[id*='dtInicial']", "input[name*='dtInicial']"]).fill(start.strftime("%d/%m/%Y"))
-            self._first_visible(page, ["input[id*='dtFinal']", "input[name*='dtFinal']"]).fill(end.strftime("%d/%m/%Y"))
+            start_field = self._first_visible(page, ["input[id*='dtInicial']", "input[name*='dtInicial']"])
+            end_field = self._first_visible(page, ["input[id*='dtFinal']", "input[name*='dtFinal']"])
+            self._set_date(start_field, start.strftime("%d/%m/%Y"))
+            self._set_date(end_field, end.strftime("%d/%m/%Y"))
+            if start_field.input_value().strip() != start.strftime("%d/%m/%Y") or end_field.input_value().strip() != end.strftime("%d/%m/%Y"):
+                raise PortalAdapterError("DATE_RANGE_VALIDATION_FAILED")
+            before = page.locator("tbody tr:visible").all_inner_texts()
             self._click_text(page, ["Pesquisar"])
+            self._confirm_search_refresh(page, before)
             self._competence = competence
+            self._search_confirmed = True
         except Exception as exc:
             raise PortalAdapterError("COMPETENCE_SELECTION_FAILED") from exc
 
     def download_statements(self, account: RuntimeAccount) -> Iterable[Path]:
-        if not self._competence:
+        if not self._competence or not self._search_confirmed:
             raise PortalAdapterError("COMPETENCE_NOT_SELECTED")
         page = self._require_page()
         rows = page.locator("tbody tr:visible")
@@ -180,6 +185,20 @@ class PlaywrightSocinproSession:
                     continue
         raise PortalAdapterError("UNEXPECTED_PAGE")
 
+    def _set_date(self, field, value: str) -> None:
+        field.fill(value)
+        field.press("Tab")
+
+    def _confirm_search_refresh(self, page, before: list[str]) -> None:
+        deadline = time.monotonic() + self.settings.timeout_ms / 1000
+        while time.monotonic() < deadline:
+            current = page.locator("tbody tr:visible").all_inner_texts()
+            body = page.locator("body").inner_text().casefold()
+            if current != before or any(text in body for text in ("nenhum demonstrativo", "sem demonstrativo", "não existem")):
+                return
+            page.wait_for_timeout(250)
+        raise PortalAdapterError("SEARCH_REFRESH_NOT_CONFIRMED")
+
     def _download(self, page, account: RuntimeAccount, label: str, selectors: list[str]) -> Path:
         button = self._first_visible(page, selectors)
         try:
@@ -206,3 +225,12 @@ class PlaywrightSocinproSession:
             target = self.settings.staging_dir / f"{Path(filename).stem} ({number}){Path(filename).suffix}"
             number += 1
         return target
+
+
+def competence_date_range(competence: str) -> tuple[date, date]:
+    if not re.fullmatch(r"\d{4}-\d{2}", competence):
+        raise PortalAdapterError("COMPETENCE_INVALID")
+    year, month = map(int, competence.split("-"))
+    if not 1 <= month <= 12:
+        raise PortalAdapterError("COMPETENCE_INVALID")
+    return date(year, month, 1), date(year, month, calendar.monthrange(year, month)[1])
