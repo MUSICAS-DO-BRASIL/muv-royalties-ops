@@ -77,6 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--account-limit", type=int, default=1)
     parser.add_argument("--start-at", type=int, default=1)
     parser.add_argument("--max-accounts", type=int, default=None)
+    parser.add_argument("--account-index", action="append", type=int, default=[])
     parser.add_argument("--stop-after-first-download", action="store_true")
     parser.add_argument("--inventory-only", action="store_true")
     parser.add_argument("--staging-root", type=Path, default=None)
@@ -87,6 +88,12 @@ def build_parser() -> argparse.ArgumentParser:
 def _planned_accounts(accounts, args):
     if args.start_at < 1:
         raise SocinproPortalRuntimeError("SMOKE_START_AT_INVALID")
+    requested = tuple(getattr(args, "account_index", ()))
+    if requested:
+        by_index = {account.index: account for account in accounts}
+        if len(set(requested)) != len(requested) or any(index not in by_index for index in requested):
+            raise SocinproPortalRuntimeError("SMOKE_ACCOUNT_INDEX_INVALID")
+        return tuple(by_index[index] for index in requested)
     max_accounts = args.max_accounts if args.max_accounts is not None else args.account_limit
     if max_accounts < 1:
         raise SocinproPortalRuntimeError("SMOKE_MAX_ACCOUNTS_INVALID")

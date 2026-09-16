@@ -1,7 +1,17 @@
 import argparse
 from types import SimpleNamespace
+import pytest
 
 from socinpro.portal import smoke_runner
+
+
+def test_explicit_non_contiguous_account_selection_is_exact():
+    accounts = tuple(SimpleNamespace(index=index) for index in range(1, 80))
+    args = argparse.Namespace(start_at=1, max_accounts=None, account_limit=1, account_index=[22, 35, 76])
+    assert [account.index for account in smoke_runner._planned_accounts(accounts, args)] == [22, 35, 76]
+    args.account_index = [22, 99]
+    with pytest.raises(Exception, match="SMOKE_ACCOUNT_INDEX_INVALID"):
+        smoke_runner._planned_accounts(accounts, args)
 
 
 def test_smoke_runner_uses_first_runtime_account_and_only_caller_staging(monkeypatch, tmp_path):

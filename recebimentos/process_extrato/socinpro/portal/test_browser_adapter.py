@@ -130,7 +130,7 @@ def test_no_payment_and_unexpected_page_are_distinct(tmp_path):
     session._competence = "2026-08"
     session._search_clicked = True
     session._search_confirmed = True
-    session._search_diagnostics = {"SEARCH_CONTROL_FOUND": True, "SEARCH_ACTIONABLE_CONTROL_RESOLVED": True, "SEARCH_ACTIVATION_ATTEMPTED": True, "SEARCH_ACTIVATION_CONFIRMED": True, "SEARCH_RESULT_REFRESH_CONFIRMED": True}
+    session._search_diagnostics = {"SEARCH_CONTROL_FOUND": True, "SEARCH_ACTIONABLE_CONTROL_RESOLVED": True, "SEARCH_ACTIVATION_ATTEMPTED": True, "SEARCH_ACTIVATION_CONFIRMED": True, "SEARCH_RESULT_REFRESH_CONFIRMED": True, "REFRESHED_RESULT_EMPTY": True}
     assert tuple(session.download_statements(RuntimeAccount(1, "user", "secret"))) == ()
 
     session._page = FakePage("layout sem tabela", count=1)
@@ -537,7 +537,7 @@ def test_refreshed_empty_search_allows_no_payment(tmp_path):
     session = PlaywrightSocinproSession(BrowserSettings(tmp_path))
     before = session._search_snapshot(page)
     session._activate_search(page)
-    page.markup = "<tr class='empty refreshed'></tr>"
+    page.markup = "<tr class='empty refreshed'>Nenhum demonstrativo encontrado</tr>"
     session._confirm_search_refresh(page, before)
     session._page = page
     session._competence = "2026-08"
@@ -615,6 +615,20 @@ def test_inventory_fails_closed_when_required_action_is_absent(tmp_path):
     session._action_visible = lambda _page, selectors: "anal" in selectors[-1]
     with pytest.raises(PortalAdapterError, match="DOCUMENT_ACTION_INVENTORY_INCOMPLETE"):
         session.inventory_payment_rows(RuntimeAccount(9, "user", "secret"))
+
+
+def test_visible_payment_rows_override_stale_body_empty_words(tmp_path):
+    page = SearchPage(None); page.rows = ["25/08/2026 demonstrativo"]; page.body = "Nenhum demonstrativo antigo"
+    session = PlaywrightSocinproSession(BrowserSettings(tmp_path)); session._page = page; session._competence = "2026-08"; session._search_clicked = session._search_confirmed = True
+    session._search_diagnostics = {key: True for key in ("SEARCH_CONTROL_FOUND", "SEARCH_ACTIONABLE_CONTROL_RESOLVED", "SEARCH_ACTIVATION_ATTEMPTED", "SEARCH_ACTIVATION_CONFIRMED", "SEARCH_RESULT_REFRESH_CONFIRMED")}
+    session._search_diagnostics["REFRESHED_RESULT_EMPTY"] = False
+    document = tmp_path / "synthetic.pdf"; document.write_bytes(b"%PDF-x"); session._download = lambda *_args: document
+    assert len(tuple(session.download_statements(RuntimeAccount(1, "user", "secret")))) == 2
+
+
+def test_displayed_amount_is_kept_as_observed_portal_text():
+    assert PlaywrightSocinproSession._displayed_amount("25/08/2026 R$ 2.929,06") == "R$2.929,06"
+    assert PlaywrightSocinproSession._displayed_amount("25/08/2026") is None
 
 
 def test_date_control_missing_reports_specific_sanitized_reason(tmp_path):

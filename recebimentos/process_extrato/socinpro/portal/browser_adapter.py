@@ -149,8 +149,7 @@ class PlaywrightSocinproSession:
             count = rows.count()
         except Exception as exc:
             raise PortalAdapterError("DOCUMENT_DISCOVERY_FAILED") from exc
-        body = page.locator("body").inner_text().casefold()
-        if count == 0 or any(text in body for text in ("nenhum demonstrativo", "sem demonstrativo", "não existem")):
+        if self._positive_empty_state(count):
             return ()
         files: list[Path] = []
         for row in range(count):
@@ -165,7 +164,7 @@ class PlaywrightSocinproSession:
                 downloaded = self._download(page, account, label, selectors)
                 files.append(downloaded)
                 self._download_diagnostics["DOWNLOAD_ACTIONS_COMPLETED"] += 1
-                self._download_manifest.append({"run_id": self.settings.run_id, "account_index": account.index, "payment_row_ordinal": row + 1, "payment_row_key": row_key, "payment_date": payment_date.group(0), "document_role": label, "download_action": label, "file_sha256": hashlib.sha256(downloaded.read_bytes()).hexdigest()})
+                self._download_manifest.append({"run_id": self.settings.run_id, "account_index": account.index, "payment_row_ordinal": row + 1, "payment_row_key": row_key, "payment_date": payment_date.group(0), "portal_displayed_amount": self._displayed_amount(row_text), "document_role": label, "download_action": label, "file_sha256": hashlib.sha256(downloaded.read_bytes()).hexdigest()})
             self._download_diagnostics["PAYMENT_ROWS_PROCESSED"] += 1
         if self._download_diagnostics["PAYMENT_ROWS_DISCOVERED"] != self._download_diagnostics["PAYMENT_ROWS_PROCESSED"] or self._download_diagnostics["DOWNLOAD_ACTIONS_DISCOVERED"] != self._download_diagnostics["DOWNLOAD_ACTIONS_COMPLETED"]:
             raise PortalAdapterError("DOCUMENT_PROCESSING_INCOMPLETE", self.navigation_diagnostics)
@@ -186,10 +185,10 @@ class PlaywrightSocinproSession:
         self._download_manifest = []
         rows = page.locator("tbody tr:visible")
         try:
-            count = rows.count(); body = page.locator("body").inner_text().casefold()
+            count = rows.count()
         except Exception as exc:
             raise PortalAdapterError("DOCUMENT_DISCOVERY_FAILED") from exc
-        if count == 0 or any(text in body for text in ("nenhum demonstrativo", "sem demonstrativo", "não existem")):
+        if self._positive_empty_state(count):
             return ()
         for row in range(count):
             row_text = rows.nth(row).inner_text(); payment_date = re.search(r"\d{2}/\d{2}/\d{4}", row_text)
@@ -204,7 +203,7 @@ class PlaywrightSocinproSession:
             if not all(available.values()):
                 raise PortalAdapterError("DOCUMENT_ACTION_INVENTORY_INCOMPLETE", self.navigation_diagnostics)
             row_key = hashlib.sha256(re.sub(r"\s+", " ", row_text).strip().casefold().encode("utf-8")).hexdigest()
-            self._download_manifest.append({"run_id": self.settings.run_id, "account_index": account.index, "payment_row_ordinal": row + 1, "payment_row_key": row_key, "payment_date": payment_date.group(0), "analitico_action_available": True, "sintetico_action_available": True})
+            self._download_manifest.append({"run_id": self.settings.run_id, "account_index": account.index, "payment_row_ordinal": row + 1, "payment_row_key": row_key, "payment_date": payment_date.group(0), "portal_displayed_amount": self._displayed_amount(row_text), "analitico_action_available": True, "sintetico_action_available": True})
             self._download_diagnostics["PAYMENT_ROWS_PROCESSED"] += 1
         if self._download_diagnostics["PAYMENT_ROWS_DISCOVERED"] != self._download_diagnostics["PAYMENT_ROWS_PROCESSED"]:
             raise PortalAdapterError("DOCUMENT_PROCESSING_INCOMPLETE", self.navigation_diagnostics)
@@ -254,6 +253,15 @@ class PlaywrightSocinproSession:
             return True
         except PortalAdapterError:
             return False
+
+    def _positive_empty_state(self, visible_row_count: int) -> bool:
+        """Only a confirmed refreshed empty result can produce NO_PAYMENT."""
+        return visible_row_count == 0 and self._search_diagnostics.get("REFRESHED_RESULT_EMPTY") is True
+
+    @staticmethod
+    def _displayed_amount(row_text: str) -> str | None:
+        match = re.search(r"R\$\s*-?\s*\d{1,3}(?:\.\d{3})*,\d{2}", row_text)
+        return re.sub(r"\s+", "", match.group(0)) if match else None
 
     def _validate_session(self, page) -> None:
         text = page.locator("body").inner_text(timeout=10_000).casefold()
