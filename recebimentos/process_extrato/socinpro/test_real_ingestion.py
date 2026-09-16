@@ -48,6 +48,14 @@ def test_real_pdf_layout_is_parsed_with_decimal_and_required_fields(tmp_path):
     assert parsed.receipt_value == Decimal("100.50")
 
 
+def test_pdf_account_line_supersedes_document_subtype_for_titular(tmp_path):
+    path = tmp_path / "portal-layout.pdf"
+    write_text_pdf(path, ["Demonstrativo do Titular", "Extrato analitico", "HURST MUSIC SPE I LTDA Cod. SOCINPRO: 9396822", "Pagamento efetuado: 24/07/2026 - R$-5.054,23"])
+    parsed = parse_payment_pdf(path)
+    assert parsed.titular == "HURST MUSIC SPE I LTDA"
+    assert parsed.source_code == "9396822"
+
+
 def test_real_workbook_projection_is_read_only_and_requires_legacy_headers(tmp_path):
     path = tmp_path / "payments.xlsx"; book = Workbook(); sheet = book.active; sheet.title = "pagamentos"
     sheet.append(["cod_socinpro", "titular", "data_pagamento", "valor_pagamento", "arquivo_analitico"])

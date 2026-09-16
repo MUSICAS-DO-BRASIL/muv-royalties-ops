@@ -174,8 +174,14 @@ def _parse_payment_text(text: str, reference: str, document: str) -> ParsedSocin
     lines = [re.sub(r"\s+", " ", line).strip() for line in text.splitlines() if line.strip()]
     if not any("pagamento efetuado" in _key(line) for line in lines):
         raise SocinproIngestionError("MARCADOR_PAGAMENTO_AUSENTE")
-    titular_index = next((index for index, line in enumerate(lines) if "demonstrativo do titular" in _key(line)), -1)
-    titular = lines[titular_index + 1] if titular_index >= 0 and titular_index + 1 < len(lines) else ""
+    # The operational portal layout places the account holder on the same
+    # line as its SOCINPRO code. The next line after the document title is
+    # merely the document subtype (for example, "Extrato analítico").
+    titular_match = re.search(r"(?mi)^\s*(.+?)\s+C[ÓO]D\.?\s*SOCINPRO\s*:", text)
+    titular = titular_match.group(1).strip() if titular_match else ""
+    if not titular:
+        titular_index = next((index for index, line in enumerate(lines) if "demonstrativo do titular" in _key(line)), -1)
+        titular = lines[titular_index + 1] if titular_index >= 0 and titular_index + 1 < len(lines) else ""
     code_match = re.search(r"C[ÓO]D\.?(?:\s+|\n)*SOCINPRO\s*:\s*(?:C[ÓO]D\.?(?:\s+|\n)*ECAD\s*:\s*)?(\d+)", text, re.IGNORECASE)
     source_code = code_match.group(1) if code_match else ""
     payment_match = re.search(r"(\d{2}/\d{2}/\d{4})\s+(-?\s*R\$\s*-?\s*\d{1,3}(?:\.\d{3})*,\d{2})\s*Pagamento\s+efetuado", text, re.IGNORECASE)
