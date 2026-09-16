@@ -61,6 +61,46 @@ class AuthenticatedNavigationPage(FakePage):
         self.url = self.final_url
 
 
+class PrimeFacesDateField:
+    def __init__(self, value, on_blur=None, readbacks=None, timeline=None, name=None):
+        self.value = value
+        self._on_blur = on_blur
+        self._readbacks = iter(readbacks) if readbacks is not None else None
+        self._timeline = timeline
+        self._name = name
+        self.events = []
+
+    def _record(self, event):
+        self.events.append(event)
+        if self._timeline is not None:
+            self._timeline.append(f"{self._name}:{event}")
+
+    def is_editable(self):
+        return True
+
+    def focus(self):
+        self._record("focus")
+
+    def press(self, key):
+        self._record(f"press:{key}")
+        if key == "Backspace":
+            self.value = ""
+        elif key == "Tab" and self._on_blur:
+            self._on_blur()
+
+    def type(self, value):
+        self._record(f"type:{value}")
+        self.value += value
+
+    def input_value(self):
+        if self._readbacks is not None:
+            try:
+                return next(self._readbacks)
+            except StopIteration:
+                pass
+        return self.value
+
+
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
@@ -214,8 +254,11 @@ def test_successful_navigation_continues_to_competence_selection(tmp_path):
 
     class Field:
         def __init__(self): self.value = ""
-        def fill(self, value): self.value = value
-        def press(self, _key): return None
+        def is_editable(self): return True
+        def focus(self): return None
+        def press(self, key):
+            if key == "Backspace": self.value = ""
+        def type(self, value): self.value += value
         def input_value(self): return self.value
 
     session = PlaywrightSocinproSession(BrowserSettings(tmp_path))
@@ -376,8 +419,11 @@ def test_select_competence_activates_search_and_confirms_payment_refresh(tmp_pat
 
     class Field:
         def __init__(self): self.value = ""
-        def fill(self, value): self.value = value
-        def press(self, _key): return None
+        def is_editable(self): return True
+        def focus(self): return None
+        def press(self, key):
+            if key == "Backspace": self.value = ""
+        def type(self, value): self.value += value
         def input_value(self): return self.value
 
     start, end = Field(), Field()
@@ -423,4 +469,66 @@ def test_date_readback_mismatch_blocks_search(tmp_path):
 
     assert caught.value.diagnostics["COMPETENCE_FAILURE_REASON"] == "START_DATE_MISMATCH"
     assert caught.value.diagnostics["START_DATE_MATCH"] is False
+    assert session._search_clicked is False
+
+
+def _synthetic_date_selection_session(tmp_path, start, end):
+    page = SearchPage(None)
+    session = PlaywrightSocinproSession(BrowserSettings(tmp_path))
+    session._page = page
+    session._navigate_to_demonstrativo = lambda _page: None
+    session._first_visible = lambda _page, selectors: start if any("Inicial" in selector or "inicial" in selector for selector in selectors) else end
+    return session, page
+
+
+def test_keyboard_date_replacement_updates_primefaces_style_start_field(tmp_path):
+    session = PlaywrightSocinproSession(BrowserSettings(tmp_path))
+    field = PrimeFacesDateField("17/08/2026")
+
+    immediately_after, after_blur = session._set_date(field, "01/08/2026")
+
+    assert (immediately_after, after_blur, field.value) == ("01/08/2026", "01/08/2026", "01/08/2026")
+    assert field.events == ["focus", "press:Control+A", "press:Backspace", "type:01/08/2026", "press:Tab"]
+
+
+def test_end_mutation_happens_before_final_start_mutation_and_cannot_restore_start(tmp_path):
+    timeline = []
+    start = PrimeFacesDateField("17/08/2026", timeline=timeline, name="start")
+    end = PrimeFacesDateField("16/09/2026", on_blur=lambda: setattr(start, "value", "17/08/2026"), timeline=timeline, name="end")
+    session, page = _synthetic_date_selection_session(tmp_path, start, end)
+    page.control = SearchControl(lambda: setattr(page, "markup", "<tr><td>refreshed</td></tr>"))
+
+    session.select_competence("2026-08")
+
+    assert (start.value, end.value) == ("01/08/2026", "31/08/2026")
+    assert timeline.index("end:press:Tab") < timeline.index("start:focus")
+    assert session._search_clicked is True
+
+
+def test_start_date_reversion_after_blur_is_detected_before_search(tmp_path):
+    start = PrimeFacesDateField("17/08/2026", on_blur=lambda: setattr(start, "value", "17/08/2026"))
+    end = PrimeFacesDateField("16/09/2026")
+    session, page = _synthetic_date_selection_session(tmp_path, start, end)
+    page.control = SearchControl()
+
+    with pytest.raises(PortalAdapterError, match="COMPETENCE_SELECTION_FAILED") as caught:
+        session.select_competence("2026-08")
+
+    assert caught.value.diagnostics["COMPETENCE_FAILURE_REASON"] == "START_DATE_REVERTED_AFTER_BLUR"
+    assert caught.value.diagnostics["START_DATE_VALUE_AFTER_MUTATION"] == "01/08/2026"
+    assert caught.value.diagnostics["START_DATE_VALUE_AFTER_BLUR"] == "17/08/2026"
+    assert session._search_clicked is False
+
+
+def test_final_both_date_readback_blocks_search_after_late_start_reversion(tmp_path):
+    start = PrimeFacesDateField("17/08/2026", readbacks=["01/08/2026", "01/08/2026", "17/08/2026"])
+    end = PrimeFacesDateField("16/09/2026")
+    session, page = _synthetic_date_selection_session(tmp_path, start, end)
+    page.control = SearchControl()
+
+    with pytest.raises(PortalAdapterError, match="COMPETENCE_SELECTION_FAILED") as caught:
+        session.select_competence("2026-08")
+
+    assert caught.value.diagnostics["COMPETENCE_FAILURE_REASON"] == "START_DATE_MISMATCH"
+    assert caught.value.diagnostics["ACTUAL_START_DATE"] == "17/08/2026"
     assert session._search_clicked is False

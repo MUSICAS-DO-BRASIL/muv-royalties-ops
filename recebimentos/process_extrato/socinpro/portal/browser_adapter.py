@@ -93,8 +93,8 @@ class PlaywrightSocinproSession:
         try:
             start_field = self._date_control(page, "START_DATE", ["input[aria-label*='data inicial' i], input[placeholder*='data inicial' i], input[name*='dtInicial' i], input[id*='dtInicial' i], input[name*='dataInicial' i], input[id*='dataInicial' i]"])
             end_field = self._date_control(page, "END_DATE", ["input[aria-label*='data final' i], input[placeholder*='data final' i], input[name*='dtFinal' i], input[id*='dtFinal' i], input[name*='dataFinal' i], input[id*='dataFinal' i]"])
-            self._set_competence_date(start_field, "START_DATE", start.strftime("%d/%m/%Y"))
             self._set_competence_date(end_field, "END_DATE", end.strftime("%d/%m/%Y"))
+            self._set_competence_date(start_field, "START_DATE", start.strftime("%d/%m/%Y"))
             self._validate_competence_dates(start_field, end_field)
             before = self._search_snapshot(page)
             self._activate_search(page)
@@ -292,9 +292,23 @@ class PlaywrightSocinproSession:
         self._navigation_diagnostics = diagnostics
         return diagnostics
 
-    def _set_date(self, field, value: str) -> None:
-        field.fill(value)
+    def _set_date(self, field, value: str) -> tuple[str, str]:
+        """Replace a PrimeFaces date value through normal keyboard interaction.
+
+        ``fill`` can bypass the per-keystroke behavior expected by a JSF date
+        widget.  Typing after a Windows select-all produces ordinary input
+        events; Tab produces the normal change/blur path.  Return both
+        readbacks so a component reversion is distinguishable from a failed
+        replacement.
+        """
+        field.focus()
+        field.press("Control+A")
+        field.press("Backspace")
+        field.type(value)
+        immediately_after_mutation = field.input_value().strip()
         field.press("Tab")
+        after_blur = field.input_value().strip()
+        return immediately_after_mutation, after_blur
 
     def _date_control(self, page, prefix: str, selectors: list[str]):
         started = time.perf_counter()
@@ -321,7 +335,16 @@ class PlaywrightSocinproSession:
         started = time.perf_counter()
         self._competence_diagnostics[f"{prefix}_SET_ATTEMPTED"] = True
         try:
-            self._set_date(field, expected)
+            immediately_after_mutation, after_blur = self._set_date(field, expected)
+            self._competence_diagnostics[f"{prefix}_VALUE_AFTER_MUTATION"] = immediately_after_mutation
+            self._competence_diagnostics[f"{prefix}_VALUE_AFTER_BLUR"] = after_blur
+            if immediately_after_mutation != expected:
+                raise self._competence_failure(f"{prefix}_MUTATION_MISMATCH")
+            if after_blur != expected:
+                reason = f"{prefix}_REVERTED_AFTER_BLUR" if immediately_after_mutation == expected else f"{prefix}_BLUR_MISMATCH"
+                raise self._competence_failure(reason)
+        except PortalAdapterError:
+            raise
         except Exception:
             raise self._competence_failure(f"{prefix}_SET_FAILED") from None
         finally:
@@ -362,7 +385,7 @@ class PlaywrightSocinproSession:
 
     @staticmethod
     def _new_competence_diagnostics(start: str, end: str) -> dict[str, object]:
-        return {"COMPETENCE_STAGE": "COMPETENCE_SELECTION", "START_DATE_CONTROL_FOUND": False, "END_DATE_CONTROL_FOUND": False, "START_DATE_CONTROL_ACTIONABLE": False, "END_DATE_CONTROL_ACTIONABLE": False, "EXPECTED_START_DATE": start, "EXPECTED_END_DATE": end, "START_DATE_SET_ATTEMPTED": False, "END_DATE_SET_ATTEMPTED": False, "START_DATE_READBACK_AVAILABLE": False, "END_DATE_READBACK_AVAILABLE": False, "START_DATE_MATCH": False, "END_DATE_MATCH": False, "COMPETENCE_FAILURE_REASON": None}
+        return {"COMPETENCE_STAGE": "COMPETENCE_SELECTION", "START_DATE_CONTROL_FOUND": False, "END_DATE_CONTROL_FOUND": False, "START_DATE_CONTROL_ACTIONABLE": False, "END_DATE_CONTROL_ACTIONABLE": False, "EXPECTED_START_DATE": start, "EXPECTED_END_DATE": end, "START_DATE_SET_ATTEMPTED": False, "END_DATE_SET_ATTEMPTED": False, "START_DATE_VALUE_AFTER_MUTATION": None, "END_DATE_VALUE_AFTER_MUTATION": None, "START_DATE_VALUE_AFTER_BLUR": None, "END_DATE_VALUE_AFTER_BLUR": None, "START_DATE_READBACK_AVAILABLE": False, "END_DATE_READBACK_AVAILABLE": False, "START_DATE_MATCH": False, "END_DATE_MATCH": False, "COMPETENCE_FAILURE_REASON": None}
 
     def _activate_search(self, page) -> None:
         """Click the visible actionable Pesquisar control, never its text node."""
