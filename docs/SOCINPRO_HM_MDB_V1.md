@@ -78,3 +78,18 @@ The historical mapping used for that replay remains external runtime
 configuration and is never committed. This establishes a golden baseline for
 the next unclosed competence; it does not authorize republishing a closed
 month. Portal acquisition remains human-in-the-loop when required.
+
+## Portal runtime credential contract
+
+The optional portal runtime is separate from ingestion and uses external,
+entity-specific credential paths only: `MUV_SOCINPRO_HM_CREDENTIALS_PATH` for
+HM and `MUV_SOCINPRO_MDB_CREDENTIALS_PATH` for MDB. It validates the selected
+workbook read-only for a user column, a password column, populated fields and
+unique runtime account identifiers before any browser is created. It never
+falls back across entities or to a machine-specific path.
+
+`LOGINS.xlsx` is a global master reference and is not a portal runtime
+credential dependency. Any downstream catalogue or business use must be
+validated at that downstream boundary, after document acquisition; it cannot
+block credential preflight or portal download start. Portal browser adapters
+remain human-in-the-loop for CAPTCHA and MFA and must not log secrets.
