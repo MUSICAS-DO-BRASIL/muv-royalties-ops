@@ -50,3 +50,8 @@
 # Unused source-tree docs/examples; tests generate their own synthetic mappings.
 **/*.md
 **/*.json
+
+# Host backup utility is copied only into the explicit test target.
+!scripts/
+scripts/*
+!scripts/backup_postgres.py

@@ -22,6 +22,7 @@ CMD ["python", "-m", "container_runtime", "start"]
 FROM runtime AS test
 USER root
 COPY requirements-dev.txt pyproject.toml ./
+COPY scripts/backup_postgres.py ./scripts/backup_postgres.py
 RUN python -m pip install --no-cache-dir -r requirements-dev.txt
 USER 10001:10001
 HEALTHCHECK NONE

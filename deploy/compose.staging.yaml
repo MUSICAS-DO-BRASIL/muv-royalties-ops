@@ -1,0 +1,68 @@
+name: muv-royalties-staging
+services:
+  app:
+    image: ${MUV_APP_IMAGE:?Set an immutable validated app image}
+    restart: unless-stopped
+    networks: [frontend, database]
+    ports:
+      - "127.0.0.1:${APP_PORT:?Set APP_PORT}:8501"
+    environment:
+      APP_ENV: ${APP_ENV:?Set APP_ENV}
+      DB_HOST: ${DB_HOST:?Set DB_HOST in external config}
+      DB_PORT: ${DB_PORT:?Set DB_PORT in external config}
+      DB_NAME: ${DB_NAME:?Set DB_NAME in external config}
+      DB_USER: ${DB_USER:?Set DB_USER in external config}
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in external config}
+      MUV_OPERATIONAL_ROOT: ${MUV_OPERATIONAL_ROOT:-/data/months}
+      MUV_TEMPLATE_ROOT: ${MUV_TEMPLATE_ROOT:-/data/templates}
+      MUV_BTG_SOURCE_MAP: /data/config/btg.json
+      MUV_SAFRA_SOURCE_MAP: /data/config/safra.json
+      MUV_SOCINPRO_MAPPING_PATH: /data/config/socinpro.json
+      MUV_SOCINPRO_HM_CREDENTIALS_PATH: /run/muv-credentials/credenciais_hurst.xlsx
+      MUV_SOCINPRO_MDB_CREDENTIALS_PATH: /run/muv-credentials/credenciais_mdb.xlsx
+    volumes:
+      - app_data:/data
+      - type: bind
+        source: ${MUV_CONFIG_DIR:?Set external config directory}
+        target: /data/config
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MUV_CREDENTIALS_DIR:?Set external credential directory}
+        target: /run/muv-credentials
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs:
+      - /tmp:uid=10001,gid=10001,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    depends_on:
+      postgres:
+        condition: service_healthy
+  postgres:
+    restart: unless-stopped
+    networks: [database]
+    image: postgres:18-bookworm@sha256:1c59e2c3c818eaa0f0628f695b36e7c9e362d6b219b36a54a32df645cbd7e1af
+    environment:
+      POSTGRES_DB: ${DB_NAME:?Set DB_NAME in external config}
+      POSTGRES_USER: ${DB_USER:?Set DB_USER in external config}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in external config}
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+volumes:
+  app_data:
+  postgres_data:
+
+networks:
+  frontend:
+  database:
+    internal: true
