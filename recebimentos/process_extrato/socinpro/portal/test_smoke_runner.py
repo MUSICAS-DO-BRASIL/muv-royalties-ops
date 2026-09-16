@@ -11,6 +11,16 @@ def test_smoke_runner_uses_first_runtime_account_and_only_caller_staging(monkeyp
 
     class Session:
         browser_started = True
+        navigation_diagnostics = {
+            "EXPECTED_START_DATE": "01/08/2026", "EXPECTED_END_DATE": "31/08/2026",
+            "ACTUAL_START_DATE": "01/08/2026", "ACTUAL_END_DATE": "31/08/2026",
+            "DATE_RANGE_VALIDATION": True, "DATE_CONTROLS_SETTLED": True,
+            "SEARCH_CONTROL_FOUND": True, "SEARCH_ACTIVATION_ATTEMPTED": True,
+            "SEARCH_ACTIVATION_CONFIRMED": True, "SEARCH_RESULT_REFRESH_CONFIRMED": True,
+            "SEARCH_PROOF_METHOD": "DOM_MUTATION", "REFRESHED_RESULT_EMPTY": True,
+            "COMPETENCE_TOTAL_SECONDS": 1.0, "SEARCH_CONTROL_LOCATOR_SECONDS": 0.1,
+            "SEARCH_ACTIVATION_SECONDS": 0.1, "SEARCH_REFRESH_SECONDS": 0.1,
+        }
 
         def __init__(self, settings):
             created.append(settings)
@@ -36,6 +46,9 @@ def test_smoke_runner_uses_first_runtime_account_and_only_caller_staging(monkeyp
     assert result["ACCOUNT_RESULTS"][0]["masked_identifier"] == "id#synthetic"
     assert created[0].staging_dir == tmp_path.resolve()
     assert created[0].headed is True
+    diagnostics = result["ACCOUNT_RESULTS"][0]["navigation_diagnostics"]
+    assert diagnostics["SEARCH_PROOF_METHOD"] == "DOM_MUTATION"
+    assert diagnostics["DATE_RANGE_VALIDATION"] is True
 
 
 def test_range_stops_at_first_download_and_no_payment_continues(monkeypatch, tmp_path):
@@ -56,6 +69,27 @@ def test_range_stops_at_first_download_and_no_payment_continues(monkeypatch, tmp
     result = smoke_runner.run_smoke(args)
     assert (result["PLANNED_ACCOUNT_START"], result["PLANNED_ACCOUNT_END"], result["PLANNED_ACCOUNT_COUNT"]) == (2, 11, 10)
     assert calls == [2, 3, 4] and result["STOPPED_AFTER_FIRST_DOWNLOAD"] is True
+
+
+def test_smoke_runner_includes_sanitized_search_proof_for_pass(monkeypatch, tmp_path):
+    account = SimpleNamespace(index=1, masked_identifier="id#synthetic")
+    monkeypatch.setattr(smoke_runner, "preflight_runtime_credentials", lambda _entity: SimpleNamespace(accounts=(account,)))
+
+    class Session:
+        navigation_diagnostics = {"SEARCH_CONTROL_FOUND": True, "SEARCH_ACTIVATION_ATTEMPTED": True, "SEARCH_ACTIVATION_CONFIRMED": True, "SEARCH_RESULT_REFRESH_CONFIRMED": True, "SEARCH_PROOF_METHOD": "DOM_MUTATION", "REFRESHED_RESULT_EMPTY": False}
+        def __init__(self, settings): self.settings = settings
+        def authenticate(self, _account): pass
+        def select_competence(self, _competence): pass
+        def download_statements(self, _account):
+            path = self.settings.staging_dir / "synthetic.pdf"; path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(b"x"); return (path,)
+        def close(self): pass
+
+    monkeypatch.setattr(smoke_runner, "PlaywrightSocinproSession", Session)
+    args = argparse.Namespace(entity="HM", competence="2026-08", account_limit=1, start_at=1, max_accounts=None, stop_after_first_download=False, staging_root=tmp_path, browser_executable=None)
+    result = smoke_runner.run_smoke(args)
+
+    assert result["ACCOUNT_RESULTS"][0]["status"] == "PASS"
+    assert result["ACCOUNT_RESULTS"][0]["navigation_diagnostics"]["SEARCH_PROOF_METHOD"] == "DOM_MUTATION"
 
 
 def test_start_beyond_accounts_fails_before_browser(monkeypatch, tmp_path):

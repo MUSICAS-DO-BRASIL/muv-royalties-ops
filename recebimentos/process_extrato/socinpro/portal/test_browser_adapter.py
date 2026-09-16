@@ -5,6 +5,8 @@ import pytest
 from socinpro.portal.browser_adapter import (
     DEMONSTRATIVO_PATH,
     DEMONSTRATIVO_URL,
+    SEARCH_CONTROL_TIMEOUT_MS,
+    SEARCH_REFRESH_TIMEOUT_MS,
     BrowserSettings,
     PlaywrightSocinproSession,
     PortalAdapterError,
@@ -344,6 +346,25 @@ class SearchPage:
         return None
 
 
+class AjaxSearchPage(SearchPage):
+    def __init__(self, control):
+        super().__init__(control)
+        self.request_handlers = []
+
+    def on(self, event, handler):
+        assert event == "request"
+        self.request_handlers.append(handler)
+
+    def remove_listener(self, event, handler):
+        assert event == "request"
+        self.request_handlers.remove(handler)
+
+    def emit_ajax_request(self):
+        request = type("Request", (), {"method": "POST"})()
+        for handler in tuple(self.request_handlers):
+            handler(request)
+
+
 def test_search_activates_actionable_parent_of_nested_visible_text(tmp_path):
     clicked = []
     page = SearchPage(SearchControl(lambda: clicked.append(True)))
@@ -387,6 +408,87 @@ def test_search_refresh_requires_post_click_result_mutation(tmp_path):
     session._confirm_search_refresh(page, before)
 
     assert session._search_confirmed is True
+
+
+def test_click_without_portal_reaction_cannot_confirm_search_or_no_payment(tmp_path):
+    page = SearchPage(SearchControl())
+    session = PlaywrightSocinproSession(BrowserSettings(tmp_path, timeout_ms=20))
+    before = session._search_snapshot(page)
+    session._record_pre_search_state(before)
+
+    session._activate_search(page)
+    with pytest.raises(PortalAdapterError, match="SEARCH_REFRESH_NOT_CONFIRMED"):
+        session._confirm_search_refresh(page, before)
+
+    assert session._search_diagnostics["SEARCH_ACTIVATION_ATTEMPTED"] is True
+    assert session._search_diagnostics["SEARCH_ACTIVATION_CONFIRMED"] is False
+    assert session._search_diagnostics["SEARCH_RESULT_REFRESH_CONFIRMED"] is False
+    assert session._search_diagnostics["REFRESHED_RESULT_EMPTY"] is False
+
+
+def test_unchanged_pre_search_empty_state_is_not_refresh_proof(tmp_path):
+    page = SearchPage(SearchControl())
+    session = PlaywrightSocinproSession(BrowserSettings(tmp_path, timeout_ms=20))
+    before = session._search_snapshot(page)
+    session._record_pre_search_state(before)
+
+    assert session._search_diagnostics["PRE_SEARCH_ROW_COUNT"] == 0
+    assert session._search_diagnostics["PRE_SEARCH_EMPTY_MARKER_PRESENT"] is True
+    assert len(session._search_diagnostics["PRE_SEARCH_RESULT_FINGERPRINT"]) == 16
+    session._activate_search(page)
+    with pytest.raises(PortalAdapterError, match="SEARCH_REFRESH_NOT_CONFIRMED"):
+        session._confirm_search_refresh(page, before)
+
+
+def test_primefaces_ajax_request_is_verified_search_proof(tmp_path):
+    page = AjaxSearchPage(None)
+    page.control = SearchControl(page.emit_ajax_request)
+    session = PlaywrightSocinproSession(BrowserSettings(tmp_path, timeout_ms=1))
+    before = session._search_snapshot(page)
+
+    session._activate_search(page)
+    session._confirm_search_refresh(page, before)
+
+    assert session._search_diagnostics["SEARCH_ACTIVATION_CONFIRMED"] is True
+    assert session._search_diagnostics["SEARCH_RESULT_REFRESH_CONFIRMED"] is True
+    assert session._search_diagnostics["SEARCH_PROOF_METHOD"] == "AJAX_REQUEST"
+
+
+def test_verified_empty_ajax_search_allows_no_payment(tmp_path):
+    page = AjaxSearchPage(None)
+    page.control = SearchControl(page.emit_ajax_request)
+    session = PlaywrightSocinproSession(BrowserSettings(tmp_path, timeout_ms=1))
+    before = session._search_snapshot(page)
+
+    session._activate_search(page)
+    session._confirm_search_refresh(page, before)
+    session._page = page
+    session._competence = "2026-08"
+
+    assert tuple(session.download_statements(RuntimeAccount(1, "user", "secret"))) == ()
+
+
+def test_search_waits_are_bounded_below_a_multi_minute_path():
+    assert SEARCH_CONTROL_TIMEOUT_MS * 5 + SEARCH_REFRESH_TIMEOUT_MS < 30_000
+
+
+def test_open_primefaces_calendar_overlay_blocks_search_until_settled(tmp_path):
+    class Overlay:
+        def count(self):
+            return 1
+
+    class Page:
+        def locator(self, _selector):
+            return Overlay()
+
+    session = PlaywrightSocinproSession(BrowserSettings(tmp_path))
+    session._competence_diagnostics = session._new_competence_diagnostics("01/08/2026", "31/08/2026")
+
+    with pytest.raises(PortalAdapterError, match="COMPETENCE_SELECTION_FAILED") as caught:
+        session._settle_date_controls(Page(), PrimeFacesDateField("01/08/2026"), PrimeFacesDateField("31/08/2026"))
+
+    assert caught.value.diagnostics["COMPETENCE_FAILURE_REASON"] == "DATE_CONTROLS_NOT_SETTLED"
+    assert session._search_diagnostics["DATE_CONTROLS_SETTLED"] is False
 
 
 def test_pre_search_empty_state_cannot_authorize_no_payment(tmp_path):
@@ -440,6 +542,7 @@ def test_select_competence_activates_search_and_confirms_payment_refresh(tmp_pat
     assert (start.value, end.value) == ("01/08/2026", "31/08/2026")
     assert session._search_clicked is True
     assert session._search_confirmed is True
+    assert session._search_diagnostics["SEARCH_PROOF_METHOD"] == "DOM_MUTATION"
     session._download = lambda *_args: tmp_path / "synthetic.pdf"
     assert len(tuple(session.download_statements(RuntimeAccount(1, "user", "secret")))) == 2
 

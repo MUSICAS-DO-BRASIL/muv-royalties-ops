@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 import calendar
+import hashlib
 import logging
 from pathlib import Path
 import re
@@ -22,6 +23,9 @@ LOGGER = logging.getLogger(__name__)
 LOGIN_URL = "https://associado.socinpro.org.br/portal-web/pages/public/access/login.xhtml"
 DEMONSTRATIVO_PATH = "/portal-web/pages/protected/financeiro/demonstrativo-socinpro.xhtml"
 DEMONSTRATIVO_URL = f"https://associado.socinpro.org.br{DEMONSTRATIVO_PATH}"
+SEARCH_CONTROL_TIMEOUT_MS = 2_500
+SEARCH_REFRESH_TIMEOUT_MS = 10_000
+SEARCH_POLL_MS = 200
 
 
 class PortalAdapterError(SocinproPortalRuntimeError):
@@ -54,6 +58,8 @@ class PlaywrightSocinproSession:
         self._competence: str | None = None
         self._search_confirmed = False
         self._search_clicked = False
+        self._search_ajax_observed = False
+        self._search_request_handler = None
         self._navigation_diagnostics: dict[str, object] = {}
         self._competence_diagnostics: dict[str, object] = {}
         self._search_diagnostics: dict[str, object] = {}
@@ -81,7 +87,7 @@ class PlaywrightSocinproSession:
         self._navigation_diagnostics = self._new_navigation_diagnostics(page)
         start, end = competence_date_range(competence)
         self._competence_diagnostics = self._new_competence_diagnostics(start.strftime("%d/%m/%Y"), end.strftime("%d/%m/%Y"))
-        self._search_diagnostics = {"SEARCH_CONTROL_FOUND": False, "SEARCH_ACTIVATION_ATTEMPTED": False, "SEARCH_ACTIVATION_CONFIRMED": False, "SEARCH_RESULT_REFRESH_CONFIRMED": False, "REFRESHED_RESULT_EMPTY": False}
+        self._search_diagnostics = {"SEARCH_CONTROL_FOUND": False, "SEARCH_ACTIVATION_ATTEMPTED": False, "SEARCH_ACTIVATION_CONFIRMED": False, "SEARCH_RESULT_REFRESH_CONFIRMED": False, "SEARCH_PROOF_METHOD": None, "PRE_SEARCH_ROW_COUNT": 0, "PRE_SEARCH_EMPTY_MARKER_PRESENT": False, "PRE_SEARCH_RESULT_FINGERPRINT": None, "REFRESHED_RESULT_EMPTY": False, "DATE_CONTROLS_SETTLED": False}
         self._timing_diagnostics = {key: 0.0 for key in ("DEMONSTRATIVO_CONFIRM_SECONDS", "START_DATE_LOCATOR_SECONDS", "START_DATE_SET_SECONDS", "START_DATE_READBACK_SECONDS", "END_DATE_LOCATOR_SECONDS", "END_DATE_SET_SECONDS", "END_DATE_READBACK_SECONDS", "DATE_VALIDATION_SECONDS", "SEARCH_CONTROL_LOCATOR_SECONDS", "SEARCH_ACTIVATION_SECONDS", "SEARCH_REFRESH_SECONDS", "COMPETENCE_TOTAL_SECONDS")}
         competence_started = time.perf_counter()
         try:
@@ -95,8 +101,10 @@ class PlaywrightSocinproSession:
             end_field = self._date_control(page, "END_DATE", ["input[aria-label*='data final' i], input[placeholder*='data final' i], input[name*='dtFinal' i], input[id*='dtFinal' i], input[name*='dataFinal' i], input[id*='dataFinal' i]"])
             self._set_competence_date(end_field, "END_DATE", end.strftime("%d/%m/%Y"))
             self._set_competence_date(start_field, "START_DATE", start.strftime("%d/%m/%Y"))
+            self._settle_date_controls(page, start_field, end_field)
             self._validate_competence_dates(start_field, end_field)
             before = self._search_snapshot(page)
+            self._record_pre_search_state(before)
             self._activate_search(page)
             self._confirm_search_refresh(page, before)
             self._competence = competence
@@ -371,6 +379,7 @@ class PlaywrightSocinproSession:
             raise self._competence_failure("END_DATE_READBACK_FAILED") from None
         diagnostics["START_DATE_MATCH"] = actual_start == diagnostics["EXPECTED_START_DATE"]
         diagnostics["END_DATE_MATCH"] = actual_end == diagnostics["EXPECTED_END_DATE"]
+        diagnostics["DATE_RANGE_VALIDATION"] = diagnostics["START_DATE_MATCH"] and diagnostics["END_DATE_MATCH"]
         if not diagnostics["START_DATE_MATCH"]:
             raise self._competence_failure("START_DATE_MISMATCH")
         if not diagnostics["END_DATE_MATCH"]:
@@ -385,10 +394,23 @@ class PlaywrightSocinproSession:
 
     @staticmethod
     def _new_competence_diagnostics(start: str, end: str) -> dict[str, object]:
-        return {"COMPETENCE_STAGE": "COMPETENCE_SELECTION", "START_DATE_CONTROL_FOUND": False, "END_DATE_CONTROL_FOUND": False, "START_DATE_CONTROL_ACTIONABLE": False, "END_DATE_CONTROL_ACTIONABLE": False, "EXPECTED_START_DATE": start, "EXPECTED_END_DATE": end, "START_DATE_SET_ATTEMPTED": False, "END_DATE_SET_ATTEMPTED": False, "START_DATE_VALUE_AFTER_MUTATION": None, "END_DATE_VALUE_AFTER_MUTATION": None, "START_DATE_VALUE_AFTER_BLUR": None, "END_DATE_VALUE_AFTER_BLUR": None, "START_DATE_READBACK_AVAILABLE": False, "END_DATE_READBACK_AVAILABLE": False, "START_DATE_MATCH": False, "END_DATE_MATCH": False, "COMPETENCE_FAILURE_REASON": None}
+        return {"COMPETENCE_STAGE": "COMPETENCE_SELECTION", "START_DATE_CONTROL_FOUND": False, "END_DATE_CONTROL_FOUND": False, "START_DATE_CONTROL_ACTIONABLE": False, "END_DATE_CONTROL_ACTIONABLE": False, "EXPECTED_START_DATE": start, "EXPECTED_END_DATE": end, "START_DATE_SET_ATTEMPTED": False, "END_DATE_SET_ATTEMPTED": False, "START_DATE_VALUE_AFTER_MUTATION": None, "END_DATE_VALUE_AFTER_MUTATION": None, "START_DATE_VALUE_AFTER_BLUR": None, "END_DATE_VALUE_AFTER_BLUR": None, "START_DATE_READBACK_AVAILABLE": False, "END_DATE_READBACK_AVAILABLE": False, "START_DATE_MATCH": False, "END_DATE_MATCH": False, "DATE_RANGE_VALIDATION": False, "COMPETENCE_FAILURE_REASON": None}
+
+    def _settle_date_controls(self, page, start_field, end_field) -> None:
+        """Close PrimeFaces calendar overlays before the search action."""
+        try:
+            start_field.press("Escape")
+            end_field.press("Escape")
+            overlay_count = page.locator(".ui-datepicker:visible, .ui-calendar-panel:visible").count()
+        except Exception:
+            overlay_count = 0
+        self._search_diagnostics["DATE_CONTROLS_SETTLED"] = overlay_count == 0
+        if overlay_count:
+            raise self._competence_failure("DATE_CONTROLS_NOT_SETTLED")
 
     def _activate_search(self, page) -> None:
         """Click the visible actionable Pesquisar control, never its text node."""
+        started = time.perf_counter()
         text = re.compile(r"^\s*Pesquisar\s*$", re.I)
         candidates = [
             page.get_by_role("button", name=text),
@@ -397,42 +419,99 @@ class PlaywrightSocinproSession:
             page.get_by_text(text).locator("xpath=ancestor-or-self::*[self::button or self::a or @role='button' or @onclick][1]"),
             page.locator("button:has-text('Pesquisar'), a:has-text('Pesquisar')"),
         ]
+        self._start_search_request_observer(page)
         for candidate in candidates:
             try:
                 control = candidate.first
-                control.wait_for(state="visible", timeout=self.settings.timeout_ms)
+                control.wait_for(state="visible", timeout=SEARCH_CONTROL_TIMEOUT_MS)
                 self._search_diagnostics["SEARCH_CONTROL_FOUND"] = True
+                self._timing_diagnostics["SEARCH_CONTROL_LOCATOR_SECONDS"] = round(time.perf_counter() - started, 6)
                 if not control.is_enabled():
                     continue
                 self._search_diagnostics["SEARCH_ACTIVATION_ATTEMPTED"] = True
-                control.click(timeout=self.settings.timeout_ms)
+                control.click(timeout=SEARCH_CONTROL_TIMEOUT_MS)
                 self._search_clicked = True
+                self._timing_diagnostics["SEARCH_ACTIVATION_SECONDS"] = round(time.perf_counter() - started, 6)
                 return
             except Exception:
                 continue
+        self._stop_search_request_observer(page)
+        self._timing_diagnostics["SEARCH_CONTROL_LOCATOR_SECONDS"] = round(time.perf_counter() - started, 6)
+        self._timing_diagnostics["SEARCH_ACTIVATION_SECONDS"] = round(time.perf_counter() - started, 6)
         raise PortalAdapterError("SEARCH_ACTION_FAILED", self._failure_diagnostics("SEARCH", "SEARCH_ACTION_FAILED"))
 
-    def _search_snapshot(self, page) -> tuple[tuple[str, ...], str, str | None]:
+    def _search_snapshot(self, page) -> tuple[int, bool, str]:
         rows = tuple(page.locator("tbody tr:visible").all_inner_texts())
         body = page.locator("body").inner_text().casefold()
         try:
             markup = page.locator("tbody").inner_html()
         except Exception:
-            markup = None
-        return rows, body, markup
+            markup = ""
+        empty_marker = any(text in body for text in ("nenhum demonstrativo", "sem demonstrativo", "não existem"))
+        fingerprint_source = "\n".join((*rows, markup or ""))
+        fingerprint = hashlib.sha256(fingerprint_source.encode("utf-8")).hexdigest()[:16]
+        return len(rows), empty_marker, fingerprint
 
-    def _confirm_search_refresh(self, page, before: tuple[tuple[str, ...], str, str | None]) -> None:
-        deadline = time.monotonic() + self.settings.timeout_ms / 1000
-        while time.monotonic() < deadline:
-            current = self._search_snapshot(page)
-            if current != before:
-                self._search_confirmed = True
-                self._search_diagnostics["SEARCH_ACTIVATION_CONFIRMED"] = True
-                self._search_diagnostics["SEARCH_RESULT_REFRESH_CONFIRMED"] = True
-                self._search_diagnostics["REFRESHED_RESULT_EMPTY"] = not current[0] and any(text in current[1] for text in ("nenhum demonstrativo", "sem demonstrativo", "não existem"))
+    def _record_pre_search_state(self, snapshot: tuple[int, bool, str]) -> None:
+        row_count, empty_marker, fingerprint = snapshot
+        self._search_diagnostics.setdefault("SEARCH_CONTROL_FOUND", False)
+        self._search_diagnostics.setdefault("SEARCH_ACTIVATION_ATTEMPTED", False)
+        self._search_diagnostics.setdefault("SEARCH_ACTIVATION_CONFIRMED", False)
+        self._search_diagnostics.setdefault("SEARCH_RESULT_REFRESH_CONFIRMED", False)
+        self._search_diagnostics.setdefault("SEARCH_PROOF_METHOD", None)
+        self._search_diagnostics.setdefault("REFRESHED_RESULT_EMPTY", False)
+        self._search_diagnostics["PRE_SEARCH_ROW_COUNT"] = row_count
+        self._search_diagnostics["PRE_SEARCH_EMPTY_MARKER_PRESENT"] = empty_marker
+        self._search_diagnostics["PRE_SEARCH_RESULT_FINGERPRINT"] = fingerprint
+
+    def _confirm_search_refresh(self, page, before: tuple[int, bool, str]) -> None:
+        started = time.perf_counter()
+        deadline = time.monotonic() + min(self.settings.timeout_ms, SEARCH_REFRESH_TIMEOUT_MS) / 1000
+        try:
+            while time.monotonic() < deadline:
+                current = self._search_snapshot(page)
+                if current != before:
+                    self._confirm_search_proof(current, "DOM_MUTATION")
+                    return
+                page.wait_for_timeout(SEARCH_POLL_MS)
+            if self._search_ajax_observed:
+                self._confirm_search_proof(before, "AJAX_REQUEST")
                 return
-            page.wait_for_timeout(250)
+        finally:
+            self._stop_search_request_observer(page)
+            self._timing_diagnostics["SEARCH_REFRESH_SECONDS"] = round(time.perf_counter() - started, 6)
         raise PortalAdapterError("SEARCH_REFRESH_NOT_CONFIRMED", self._failure_diagnostics("SEARCH", "SEARCH_REFRESH_NOT_CONFIRMED"))
+
+    def _confirm_search_proof(self, snapshot: tuple[int, bool, str], method: str) -> None:
+        row_count, empty_marker, _fingerprint = snapshot
+        self._search_confirmed = True
+        self._search_diagnostics["SEARCH_ACTIVATION_CONFIRMED"] = True
+        self._search_diagnostics["SEARCH_RESULT_REFRESH_CONFIRMED"] = True
+        self._search_diagnostics["SEARCH_PROOF_METHOD"] = method
+        self._search_diagnostics["REFRESHED_RESULT_EMPTY"] = row_count == 0 and empty_marker
+
+    def _start_search_request_observer(self, page) -> None:
+        self._search_ajax_observed = False
+
+        def request_observed(request) -> None:
+            if str(getattr(request, "method", "")).upper() == "POST":
+                self._search_ajax_observed = True
+
+        try:
+            page.on("request", request_observed)
+        except Exception:
+            self._search_request_handler = None
+        else:
+            self._search_request_handler = request_observed
+
+    def _stop_search_request_observer(self, page) -> None:
+        if self._search_request_handler is None:
+            return
+        try:
+            page.remove_listener("request", self._search_request_handler)
+        except Exception:
+            pass
+        self._search_request_handler = None
 
     def _download(self, page, account: RuntimeAccount, label: str, selectors: list[str]) -> Path:
         button = self._first_visible(page, selectors)
