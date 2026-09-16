@@ -78,6 +78,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--start-at", type=int, default=1)
     parser.add_argument("--max-accounts", type=int, default=None)
     parser.add_argument("--stop-after-first-download", action="store_true")
+    parser.add_argument("--inventory-only", action="store_true")
     parser.add_argument("--staging-root", type=Path, default=None)
     parser.add_argument("--browser-executable", default=os.environ.get("MUV_SOCINPRO_BROWSER_EXECUTABLE"))
     return parser
@@ -121,6 +122,11 @@ def run_smoke(args: argparse.Namespace) -> dict[str, object]:
         "PASSWORDS_EXPOSED": False,
         "OFFICIAL_FILES_CHANGED": False,
         "OFFICIAL_PUBLICATION_EXECUTED": False,
+        "INVENTORY_ONLY": bool(getattr(args, "inventory_only", False)),
+        "DOCUMENT_DOWNLOAD_COUNT": 0,
+        "PORTAL_PAYMENT_ROWS_DISCOVERED": 0,
+        "ANALITICO_ACTIONS_DISCOVERED": 0,
+        "SINTETICO_ACTIONS_DISCOVERED": 0,
     }
     started = time.perf_counter()
     try:
@@ -135,10 +141,16 @@ def run_smoke(args: argparse.Namespace) -> dict[str, object]:
             try:
                 point = time.perf_counter(); session.authenticate(account); account_result["login_seconds"] = round(time.perf_counter() - point, 3)
                 point = time.perf_counter(); session.select_competence(args.competence); account_result["navigation_seconds"] = round(time.perf_counter() - point, 3)
-                point = time.perf_counter(); files = tuple(session.download_statements(account)); account_result["download_seconds"] = round(time.perf_counter() - point, 3)
+                inventory_only = bool(getattr(args, "inventory_only", False))
+                point = time.perf_counter(); files = () if inventory_only else tuple(session.download_statements(account));
+                if inventory_only: session.inventory_payment_rows(account)
+                account_result["download_seconds"] = round(time.perf_counter() - point, 3)
                 account_result["download_count"] = len(files)
                 account_result["download_manifest"] = list(getattr(session, "download_manifest", ()))
                 result["DOWNLOAD_MANIFEST"].extend(account_result["download_manifest"])
+                diagnostics = getattr(session, "navigation_diagnostics", {})
+                for key in ("PAYMENT_ROWS_DISCOVERED", "ANALITICO_ACTIONS_DISCOVERED", "SINTETICO_ACTIONS_DISCOVERED"):
+                    result["PORTAL_PAYMENT_ROWS_DISCOVERED" if key == "PAYMENT_ROWS_DISCOVERED" else key] += int(diagnostics.get(key, 0))
                 if files:
                     valid = [item for item in files if item.is_file() and item.stat().st_size > 0 and item.suffix.casefold() not in {".crdownload", ".part"} and staging in item.resolve().parents]
                     if len(valid) != len(files): raise PortalAdapterError("DOWNLOAD_INVALID")
@@ -176,7 +188,7 @@ def run_smoke(args: argparse.Namespace) -> dict[str, object]:
             result["SOCINPRO_REAL_SMOKE_STATUS"] = "REVIEW"
             return result
         no_payment_status = "NO_PAYMENT" if result["PLANNED_ACCOUNT_COUNT"] == 1 else "NO_PAYMENT_RANGE"
-        result["SOCINPRO_REAL_SMOKE_STATUS"] = "PASS" if result["RAW_DOWNLOAD_COUNT"] else ("WAITING_HUMAN" if result["ACCOUNTS_WAITING_HUMAN"] else (no_payment_status if not result["ACCOUNTS_FAILED"] else "REVIEW"))
+        result["SOCINPRO_REAL_SMOKE_STATUS"] = ("PASS" if not result["ACCOUNTS_FAILED"] and not result["ACCOUNTS_WAITING_HUMAN"] else "REVIEW") if bool(getattr(args, "inventory_only", False)) else ("PASS" if result["RAW_DOWNLOAD_COUNT"] else ("WAITING_HUMAN" if result["ACCOUNTS_WAITING_HUMAN"] else (no_payment_status if not result["ACCOUNTS_FAILED"] else "REVIEW")))
     except SocinproPortalRuntimeError as exc:
         result["SOCINPRO_REAL_SMOKE_STATUS"] = str(exc)
     finally:

@@ -594,6 +594,29 @@ def test_download_records_every_discovered_payment_row_in_safe_manifest(tmp_path
     assert {item["run_id"] for item in session.download_manifest} == {"synthetic-run"}
 
 
+def test_inventory_records_rows_without_downloading(tmp_path):
+    page = SearchPage(None); page.rows = ["25/08/2026 demonstrativo", "26/08/2026 demonstrativo"]; page.body = "resultado atualizado"
+    session = PlaywrightSocinproSession(BrowserSettings(tmp_path, run_id="inventory"))
+    session._page = page; session._competence = "2026-08"; session._search_clicked = session._search_confirmed = True
+    session._search_diagnostics = {key: True for key in ("SEARCH_CONTROL_FOUND", "SEARCH_ACTIONABLE_CONTROL_RESOLVED", "SEARCH_ACTIVATION_ATTEMPTED", "SEARCH_ACTIVATION_CONFIRMED", "SEARCH_RESULT_REFRESH_CONFIRMED")}
+    session._action_visible = lambda *_args: True
+    session._download = lambda *_args: (_ for _ in ()).throw(AssertionError("download must not run"))
+    inventory = session.inventory_payment_rows(RuntimeAccount(9, "user", "secret"))
+    assert len(inventory) == 2
+    assert session.navigation_diagnostics["DOCUMENT_DOWNLOAD_COUNT"] == 0
+    assert session.navigation_diagnostics["ANALITICO_ACTIONS_DISCOVERED"] == 2
+    assert session.navigation_diagnostics["SINTETICO_ACTIONS_DISCOVERED"] == 2
+
+
+def test_inventory_fails_closed_when_required_action_is_absent(tmp_path):
+    page = SearchPage(None); page.rows = ["25/08/2026 demonstrativo"]; page.body = "resultado atualizado"
+    session = PlaywrightSocinproSession(BrowserSettings(tmp_path)); session._page = page; session._competence = "2026-08"; session._search_clicked = session._search_confirmed = True
+    session._search_diagnostics = {key: True for key in ("SEARCH_CONTROL_FOUND", "SEARCH_ACTIONABLE_CONTROL_RESOLVED", "SEARCH_ACTIVATION_ATTEMPTED", "SEARCH_ACTIVATION_CONFIRMED", "SEARCH_RESULT_REFRESH_CONFIRMED")}
+    session._action_visible = lambda _page, selectors: "anal" in selectors[-1]
+    with pytest.raises(PortalAdapterError, match="DOCUMENT_ACTION_INVENTORY_INCOMPLETE"):
+        session.inventory_payment_rows(RuntimeAccount(9, "user", "secret"))
+
+
 def test_date_control_missing_reports_specific_sanitized_reason(tmp_path):
     session = PlaywrightSocinproSession(BrowserSettings(tmp_path))
     session._competence_diagnostics = session._new_competence_diagnostics("01/08/2026", "31/08/2026")

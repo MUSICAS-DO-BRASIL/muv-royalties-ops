@@ -173,6 +173,43 @@ class PlaywrightSocinproSession:
             raise PortalAdapterError("UNEXPECTED_PAGE")
         return tuple(files)
 
+    def inventory_payment_rows(self, account: RuntimeAccount) -> tuple[dict[str, object], ...]:
+        """Enumerate payment rows and available document actions without clicks.
+
+        A row is accepted only when both required document actions are visible;
+        otherwise the account fails closed rather than presenting a partial
+        inventory as complete.
+        """
+        self._require_confirmed_search()
+        page = self._require_page()
+        self._download_diagnostics = {"PAYMENT_ROWS_DISCOVERED": 0, "PAYMENT_ROWS_PROCESSED": 0, "DOWNLOAD_ACTIONS_DISCOVERED": 0, "DOWNLOAD_ACTIONS_COMPLETED": 0, "ANALITICO_ACTIONS_DISCOVERED": 0, "SINTETICO_ACTIONS_DISCOVERED": 0, "DOCUMENT_DOWNLOAD_COUNT": 0}
+        self._download_manifest = []
+        rows = page.locator("tbody tr:visible")
+        try:
+            count = rows.count(); body = page.locator("body").inner_text().casefold()
+        except Exception as exc:
+            raise PortalAdapterError("DOCUMENT_DISCOVERY_FAILED") from exc
+        if count == 0 or any(text in body for text in ("nenhum demonstrativo", "sem demonstrativo", "não existem")):
+            return ()
+        for row in range(count):
+            row_text = rows.nth(row).inner_text(); payment_date = re.search(r"\d{2}/\d{2}/\d{4}", row_text)
+            if payment_date is None:
+                continue
+            self._download_diagnostics["PAYMENT_ROWS_DISCOVERED"] += 1
+            available = {label: self._action_visible(page, selectors) for label, selectors in (("analitico", [f"#frm\\:tabela\\:{row}\\:j_idt66", f"tbody tr:visible >> nth={row} >> button[title*='anal' i]"]), ("sintetico", [f"#frm\\:tabela\\:{row}\\:j_idt67", f"tbody tr:visible >> nth={row} >> button[title*='sint' i]"]))}
+            for label, found in available.items():
+                if found:
+                    self._download_diagnostics[f"{label.upper()}_ACTIONS_DISCOVERED"] += 1
+                    self._download_diagnostics["DOWNLOAD_ACTIONS_DISCOVERED"] += 1
+            if not all(available.values()):
+                raise PortalAdapterError("DOCUMENT_ACTION_INVENTORY_INCOMPLETE", self.navigation_diagnostics)
+            row_key = hashlib.sha256(re.sub(r"\s+", " ", row_text).strip().casefold().encode("utf-8")).hexdigest()
+            self._download_manifest.append({"run_id": self.settings.run_id, "account_index": account.index, "payment_row_ordinal": row + 1, "payment_row_key": row_key, "payment_date": payment_date.group(0), "analitico_action_available": True, "sintetico_action_available": True})
+            self._download_diagnostics["PAYMENT_ROWS_PROCESSED"] += 1
+        if self._download_diagnostics["PAYMENT_ROWS_DISCOVERED"] != self._download_diagnostics["PAYMENT_ROWS_PROCESSED"]:
+            raise PortalAdapterError("DOCUMENT_PROCESSING_INCOMPLETE", self.navigation_diagnostics)
+        return self.download_manifest
+
     def close(self) -> None:
         for item in (self._context, self._browser, self._playwright):
             try:
@@ -205,6 +242,18 @@ class PlaywrightSocinproSession:
         if self._page is None:
             raise PortalAdapterError("SESSION_NOT_AUTHENTICATED")
         return self._page
+
+    def _require_confirmed_search(self) -> None:
+        required = ("SEARCH_CONTROL_FOUND", "SEARCH_ACTIONABLE_CONTROL_RESOLVED", "SEARCH_ACTIVATION_ATTEMPTED", "SEARCH_ACTIVATION_CONFIRMED", "SEARCH_RESULT_REFRESH_CONFIRMED")
+        if not self._competence or not self._search_clicked or not self._search_confirmed or not all(self._search_diagnostics.get(key) is True for key in required):
+            raise PortalAdapterError("SEARCH_NOT_EXECUTED", self.navigation_diagnostics)
+
+    def _action_visible(self, page, selectors: list[str]) -> bool:
+        try:
+            self._first_visible(page, selectors)
+            return True
+        except PortalAdapterError:
+            return False
 
     def _validate_session(self, page) -> None:
         text = page.locator("body").inner_text(timeout=10_000).casefold()
