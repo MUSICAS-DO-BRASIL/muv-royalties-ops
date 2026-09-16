@@ -3,7 +3,7 @@ from decimal import Decimal
 from openpyxl import Workbook
 import pytest
 
-from socinpro.official_workbook_adapter import OfficialWorkbookAdapter, WorkbookSchemaError
+from socinpro.official_workbook_adapter import OfficialWorkbookAdapter, WorkbookSchemaError, resolved_source
 
 
 def workbook(path):
@@ -19,6 +19,8 @@ def test_read_only_btg_and_source_mapping(tmp_path):
     path=tmp_path/"official.xlsx"; workbook(path); adapter=OfficialWorkbookAdapter(path)
     assert adapter.load_source_depara()=={"socinpro":"SOCINPRO"}
     assert adapter.load_bank_receipts("2026-08")[0].value==Decimal("100.5")
+    receipt=adapter.load_bank_receipts("2026-08")[0]
+    assert resolved_source(receipt, adapter.load_source_depara()) == "SOCINPRO"
 
 
 def test_schema_fails_closed(tmp_path):

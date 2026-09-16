@@ -28,6 +28,15 @@ def _key(value: object) -> str:
     return "".join(char for char in value if not unicodedata.combining(char)).strip().casefold()
 
 
+def resolved_source(receipt: BankReceipt, source_depara: dict[str, str]) -> str | None:
+    """Classify a bank row without guessing from partial text.
+
+    The maintained bank-source column is authoritative when present; the
+    description de/para is only a deterministic fallback for blank rows.
+    """
+    return receipt.source or source_depara.get(_key(receipt.description))
+
+
 class OfficialWorkbookAdapter:
     """Typed, fail-closed reader for the validated HM workbook schema."""
     def __init__(self, path: str | Path):
