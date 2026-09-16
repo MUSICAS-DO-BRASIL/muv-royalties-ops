@@ -48,6 +48,7 @@ class PlaywrightSocinproSession:
         self._context = None
         self._page = None
         self._competence: str | None = None
+        self.browser_started = False
 
     def authenticate(self, account: RuntimeAccount) -> None:
         page = self._start_page()
@@ -127,6 +128,7 @@ class PlaywrightSocinproSession:
         if self.settings.executable_path:
             options["executable_path"] = self.settings.executable_path
         self._browser = self._playwright.chromium.launch(**options)
+        self.browser_started = True
         self._context = self._browser.new_context(accept_downloads=True, viewport=None)
         self._context.set_default_timeout(self.settings.timeout_ms)
         self._page = self._context.new_page()
