@@ -56,6 +56,7 @@ class PlaywrightSocinproSession:
         self._search_clicked = False
         self._navigation_diagnostics: dict[str, object] = {}
         self._competence_diagnostics: dict[str, object] = {}
+        self._search_diagnostics: dict[str, object] = {}
         self.browser_started = False
 
     def authenticate(self, account: RuntimeAccount) -> None:
@@ -79,6 +80,7 @@ class PlaywrightSocinproSession:
         self._navigation_diagnostics = self._new_navigation_diagnostics(page)
         start, end = competence_date_range(competence)
         self._competence_diagnostics = self._new_competence_diagnostics(start.strftime("%d/%m/%Y"), end.strftime("%d/%m/%Y"))
+        self._search_diagnostics = {"SEARCH_CONTROL_FOUND": False, "SEARCH_ACTIVATION_ATTEMPTED": False, "SEARCH_ACTIVATION_CONFIRMED": False, "SEARCH_RESULT_REFRESH_CONFIRMED": False, "REFRESHED_RESULT_EMPTY": False}
         try:
             self._navigate_to_demonstrativo(page)
         except PortalAdapterError:
@@ -86,8 +88,8 @@ class PlaywrightSocinproSession:
             # collapse a portal layout failure into a competence failure.
             raise
         try:
-            start_field = self._date_control(page, "START_DATE", ["input[aria-label*='data inicial' i]", "input[placeholder*='data inicial' i]", "input[name*='dtInicial' i]", "input[id*='dtInicial' i]", "input[name*='dataInicial' i]", "input[id*='dataInicial' i]"])
-            end_field = self._date_control(page, "END_DATE", ["input[aria-label*='data final' i]", "input[placeholder*='data final' i]", "input[name*='dtFinal' i]", "input[id*='dtFinal' i]", "input[name*='dataFinal' i]", "input[id*='dataFinal' i]"])
+            start_field = self._date_control(page, "START_DATE", ["input[aria-label*='data inicial' i], input[placeholder*='data inicial' i], input[name*='dtInicial' i], input[id*='dtInicial' i], input[name*='dataInicial' i], input[id*='dataInicial' i]"])
+            end_field = self._date_control(page, "END_DATE", ["input[aria-label*='data final' i], input[placeholder*='data final' i], input[name*='dtFinal' i], input[id*='dtFinal' i], input[name*='dataFinal' i], input[id*='dataFinal' i]"])
             self._set_competence_date(start_field, "START_DATE", start.strftime("%d/%m/%Y"))
             self._set_competence_date(end_field, "END_DATE", end.strftime("%d/%m/%Y"))
             self._validate_competence_dates(start_field, end_field)
@@ -111,11 +113,12 @@ class PlaywrightSocinproSession:
 
     @property
     def navigation_diagnostics(self) -> dict[str, object]:
-        return {**self._navigation_diagnostics, **self._competence_diagnostics}
+        return {**self._navigation_diagnostics, **self._competence_diagnostics, **self._search_diagnostics}
 
     def download_statements(self, account: RuntimeAccount) -> Iterable[Path]:
-        if not self._competence or not self._search_clicked or not self._search_confirmed:
-            raise PortalAdapterError("COMPETENCE_NOT_SELECTED")
+        required_search = ("SEARCH_CONTROL_FOUND", "SEARCH_ACTIVATION_ATTEMPTED", "SEARCH_ACTIVATION_CONFIRMED", "SEARCH_RESULT_REFRESH_CONFIRMED")
+        if not self._competence or not self._search_clicked or not self._search_confirmed or not all(self._search_diagnostics.get(key) is True for key in required_search):
+            raise PortalAdapterError("SEARCH_NOT_EXECUTED", self.navigation_diagnostics)
         page = self._require_page()
         rows = page.locator("tbody tr:visible")
         try:
@@ -359,8 +362,10 @@ class PlaywrightSocinproSession:
             try:
                 control = candidate.first
                 control.wait_for(state="visible", timeout=self.settings.timeout_ms)
+                self._search_diagnostics["SEARCH_CONTROL_FOUND"] = True
                 if not control.is_enabled():
                     continue
+                self._search_diagnostics["SEARCH_ACTIVATION_ATTEMPTED"] = True
                 control.click(timeout=self.settings.timeout_ms)
                 self._search_clicked = True
                 return
@@ -383,6 +388,9 @@ class PlaywrightSocinproSession:
             current = self._search_snapshot(page)
             if current != before:
                 self._search_confirmed = True
+                self._search_diagnostics["SEARCH_ACTIVATION_CONFIRMED"] = True
+                self._search_diagnostics["SEARCH_RESULT_REFRESH_CONFIRMED"] = True
+                self._search_diagnostics["REFRESHED_RESULT_EMPTY"] = not current[0] and any(text in current[1] for text in ("nenhum demonstrativo", "sem demonstrativo", "não existem"))
                 return
             page.wait_for_timeout(250)
         raise PortalAdapterError("SEARCH_REFRESH_NOT_CONFIRMED", self._failure_diagnostics("SEARCH", "SEARCH_REFRESH_NOT_CONFIRMED"))

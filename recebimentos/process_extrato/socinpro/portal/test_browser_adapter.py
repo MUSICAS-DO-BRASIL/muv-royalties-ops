@@ -88,6 +88,7 @@ def test_no_payment_and_unexpected_page_are_distinct(tmp_path):
     session._competence = "2026-08"
     session._search_clicked = True
     session._search_confirmed = True
+    session._search_diagnostics = {"SEARCH_CONTROL_FOUND": True, "SEARCH_ACTIVATION_ATTEMPTED": True, "SEARCH_ACTIVATION_CONFIRMED": True, "SEARCH_RESULT_REFRESH_CONFIRMED": True}
     assert tuple(session.download_statements(RuntimeAccount(1, "user", "secret"))) == ()
 
     session._page = FakePage("layout sem tabela", count=1)
@@ -350,7 +351,7 @@ def test_pre_search_empty_state_cannot_authorize_no_payment(tmp_path):
     session._page = FakePage("Nenhum demonstrativo")
     session._competence = "2026-08"
 
-    with pytest.raises(PortalAdapterError, match="COMPETENCE_NOT_SELECTED"):
+    with pytest.raises(PortalAdapterError, match="SEARCH_NOT_EXECUTED"):
         session.download_statements(RuntimeAccount(1, "user", "secret"))
 
 
