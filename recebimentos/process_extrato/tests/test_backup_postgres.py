@@ -28,7 +28,11 @@ def test_backup_is_private_and_prunes_only_old_owned_archives(tmp_path, monkeypa
     folder=tmp_path/'backups';folder.mkdir()
     old=folder/'muv-postgres-20200101T000000000000Z.dump';old.write_bytes(b'old');os.utime(old,(1,1))
     unrelated=folder/'unrelated.dump';unrelated.write_bytes(b'keep');os.utime(unrelated,(1,1))
-    symlink=folder/'muv-postgres-20200102T000000000000Z.dump';symlink.symlink_to(unrelated)
+    symlink=folder/'muv-postgres-20200102T000000000000Z.dump'
+    try:
+        symlink.symlink_to(unrelated)
+    except OSError as exc:
+        pytest.skip(f'symlinks unavailable on this host: {exc.winerror or exc.errno}')
     fake_runner(monkeypatch)
     target=invoke(tmp_path,retention_days=1)
     assert target.read_bytes()==b'PGDMP-synthetic' and target.stat().st_mode & 0o777 == 0o600
