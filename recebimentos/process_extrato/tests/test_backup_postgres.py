@@ -32,7 +32,9 @@ def test_backup_is_private_and_prunes_only_old_owned_archives(tmp_path, monkeypa
     try:
         symlink.symlink_to(unrelated)
     except OSError as exc:
-        pytest.skip(f'symlinks unavailable on this host: {exc.winerror or exc.errno}')
+        if os.name == 'nt' and exc.winerror == 1314:
+            pytest.skip('symlinks unavailable on this Windows host: missing privilege (WinError 1314)')
+        raise
     fake_runner(monkeypatch)
     target=invoke(tmp_path,retention_days=1)
     assert target.read_bytes()==b'PGDMP-synthetic' and target.stat().st_mode & 0o777 == 0o600
