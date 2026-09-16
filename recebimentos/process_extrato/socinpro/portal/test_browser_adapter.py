@@ -130,7 +130,7 @@ def test_no_payment_and_unexpected_page_are_distinct(tmp_path):
     session._competence = "2026-08"
     session._search_clicked = True
     session._search_confirmed = True
-    session._search_diagnostics = {"SEARCH_CONTROL_FOUND": True, "SEARCH_ACTIVATION_ATTEMPTED": True, "SEARCH_ACTIVATION_CONFIRMED": True, "SEARCH_RESULT_REFRESH_CONFIRMED": True}
+    session._search_diagnostics = {"SEARCH_CONTROL_FOUND": True, "SEARCH_ACTIONABLE_CONTROL_RESOLVED": True, "SEARCH_ACTIVATION_ATTEMPTED": True, "SEARCH_ACTIVATION_CONFIRMED": True, "SEARCH_RESULT_REFRESH_CONFIRMED": True}
     assert tuple(session.download_statements(RuntimeAccount(1, "user", "secret"))) == ()
 
     session._page = FakePage("layout sem tabela", count=1)
@@ -323,7 +323,7 @@ class SearchPage:
         self.control = control
         self.rows = []
         self.body = "Nenhum demonstrativo encontrado"
-        self.markup = "<tr class='empty'></tr>"
+        self.markup = "<tr class='empty'>Nenhum demonstrativo encontrado</tr>"
 
     def get_by_role(self, _role, **_kwargs):
         return BrokenSearchControl()
@@ -447,6 +447,7 @@ def test_primefaces_ajax_request_is_verified_search_proof(tmp_path):
     before = session._search_snapshot(page)
 
     session._activate_search(page)
+    assert session._search_ajax_observed is True
     session._confirm_search_refresh(page, before)
 
     assert session._search_diagnostics["SEARCH_ACTIVATION_CONFIRMED"] is True
@@ -461,6 +462,7 @@ def test_verified_empty_ajax_search_allows_no_payment(tmp_path):
     before = session._search_snapshot(page)
 
     session._activate_search(page)
+    assert session._search_ajax_observed is True
     session._confirm_search_refresh(page, before)
     session._page = page
     session._competence = "2026-08"
@@ -572,7 +574,7 @@ def test_select_competence_activates_search_and_confirms_payment_refresh(tmp_pat
     assert (start.value, end.value) == ("01/08/2026", "31/08/2026")
     assert session._search_clicked is True
     assert session._search_confirmed is True
-    assert session._search_diagnostics["SEARCH_PROOF_METHOD"] == "DOM_MUTATION"
+    assert session._search_diagnostics["SEARCH_PROOF_METHOD"] == "RESULT_CONTAINER_MUTATION"
     session._download = lambda *_args: tmp_path / "synthetic.pdf"
     assert len(tuple(session.download_statements(RuntimeAccount(1, "user", "secret")))) == 2
 

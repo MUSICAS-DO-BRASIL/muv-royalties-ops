@@ -87,7 +87,7 @@ class PlaywrightSocinproSession:
         self._navigation_diagnostics = self._new_navigation_diagnostics(page)
         start, end = competence_date_range(competence)
         self._competence_diagnostics = self._new_competence_diagnostics(start.strftime("%d/%m/%Y"), end.strftime("%d/%m/%Y"))
-        self._search_diagnostics = {"DATE_MUTATION_COMPLETE": False, "DATE_READBACK_COMPLETE": False, "DATE_CONTROLS_SETTLED": False, "SEARCH_CONTROL_RESOLVED": False, "SEARCH_CONTROL_FOUND": False, "SEARCH_ACTIVATION_ATTEMPTED": False, "SEARCH_ACTIVATION_CONFIRMED": False, "SEARCH_RESULT_REFRESH_CONFIRMED": False, "SEARCH_PROOF_METHOD": None, "PRE_SEARCH_ROW_COUNT": 0, "PRE_SEARCH_EMPTY_MARKER_PRESENT": False, "PRE_SEARCH_RESULT_FINGERPRINT": None, "REFRESHED_RESULT_EMPTY": False}
+        self._search_diagnostics = {"DATE_MUTATION_COMPLETE": False, "DATE_READBACK_COMPLETE": False, "DATE_CONTROLS_SETTLED": False, "SEARCH_CONTROL_RESOLVED": False, "SEARCH_CONTROL_FOUND": False, "SEARCH_ACTIONABLE_CONTROL_RESOLVED": False, "SEARCH_RESOLVED_TAG": None, "SEARCH_RESOLVED_TYPE": None, "SEARCH_ACTIVATION_ATTEMPTED": False, "SEARCH_REQUEST_OBSERVED": False, "SEARCH_RESULT_CONTAINER_CHANGED": False, "SEARCH_ACTIVATION_CONFIRMED": False, "SEARCH_RESULT_REFRESH_CONFIRMED": False, "SEARCH_PROOF_METHOD": None, "PRE_SEARCH_ROW_COUNT": 0, "PRE_SEARCH_EMPTY_MARKER_PRESENT": False, "PRE_SEARCH_RESULT_FINGERPRINT": None, "REFRESHED_RESULT_EMPTY": False}
         self._timing_diagnostics = {key: 0.0 for key in ("DEMONSTRATIVO_CONFIRM_SECONDS", "START_DATE_LOCATOR_SECONDS", "START_DATE_SET_SECONDS", "START_DATE_READBACK_SECONDS", "END_DATE_LOCATOR_SECONDS", "END_DATE_SET_SECONDS", "END_DATE_READBACK_SECONDS", "DATE_VALIDATION_SECONDS", "SEARCH_CONTROL_LOCATOR_SECONDS", "SEARCH_ACTIVATION_SECONDS", "SEARCH_REFRESH_SECONDS", "COMPETENCE_TOTAL_SECONDS")}
         competence_started = time.perf_counter()
         try:
@@ -130,7 +130,7 @@ class PlaywrightSocinproSession:
         return {**self._navigation_diagnostics, **self._competence_diagnostics, **self._search_diagnostics, **self._timing_diagnostics}
 
     def download_statements(self, account: RuntimeAccount) -> Iterable[Path]:
-        required_search = ("SEARCH_CONTROL_FOUND", "SEARCH_ACTIVATION_ATTEMPTED", "SEARCH_ACTIVATION_CONFIRMED", "SEARCH_RESULT_REFRESH_CONFIRMED")
+        required_search = ("SEARCH_CONTROL_FOUND", "SEARCH_ACTIONABLE_CONTROL_RESOLVED", "SEARCH_ACTIVATION_ATTEMPTED", "SEARCH_ACTIVATION_CONFIRMED", "SEARCH_RESULT_REFRESH_CONFIRMED")
         if not self._competence or not self._search_clicked or not self._search_confirmed or not all(self._search_diagnostics.get(key) is True for key in required_search):
             raise PortalAdapterError("SEARCH_NOT_EXECUTED", self.navigation_diagnostics)
         page = self._require_page()
@@ -422,7 +422,9 @@ class PlaywrightSocinproSession:
         started = time.perf_counter()
         text = re.compile(r"^\s*Pesquisar\s*$", re.I)
         candidates = [
+            page.locator("button:has-text('Pesquisar'), input[type='submit'][value*='Pesquisar' i], input[type='button'][value*='Pesquisar' i], a:has-text('Pesquisar'), [role='button']:has-text('Pesquisar')"),
             page.get_by_role("button", name=text),
+            page.get_by_role("link", name=text),
             page.locator("input[type='submit'][value*='Pesquisar' i], input[type='button'][value*='Pesquisar' i]"),
             page.locator("button[title*='Pesquisar' i], [role='button'][aria-label*='Pesquisar' i]"),
             page.get_by_text(text).locator("xpath=ancestor-or-self::*[self::button or self::a or @role='button' or @onclick][1]"),
@@ -435,6 +437,8 @@ class PlaywrightSocinproSession:
                 control.wait_for(state="visible", timeout=SEARCH_CONTROL_TIMEOUT_MS)
                 self._search_diagnostics["SEARCH_CONTROL_FOUND"] = True
                 self._search_diagnostics["SEARCH_CONTROL_RESOLVED"] = True
+                self._search_diagnostics["SEARCH_ACTIONABLE_CONTROL_RESOLVED"] = True
+                self._record_search_control_metadata(control)
                 self._timing_diagnostics["SEARCH_CONTROL_LOCATOR_SECONDS"] = round(time.perf_counter() - started, 6)
                 if not control.is_enabled():
                     continue
@@ -452,12 +456,16 @@ class PlaywrightSocinproSession:
 
     def _search_snapshot(self, page) -> tuple[int, bool, str]:
         rows = tuple(page.locator("tbody tr:visible").all_inner_texts())
-        body = page.locator("body").inner_text().casefold()
+        container = page.locator("tbody")
         try:
-            markup = page.locator("tbody").inner_html()
+            markup = container.inner_html()
         except Exception:
             markup = ""
-        empty_marker = any(text in body for text in ("nenhum demonstrativo", "sem demonstrativo", "não existem"))
+        try:
+            container_text = container.inner_text().casefold()
+        except Exception:
+            container_text = ""
+        empty_marker = any(text in (container_text + " " + markup.casefold()) for text in ("nenhum demonstrativo", "sem demonstrativo", "não existem"))
         fingerprint_source = "\n".join((*rows, markup or ""))
         fingerprint = hashlib.sha256(fingerprint_source.encode("utf-8")).hexdigest()[:16]
         return len(rows), empty_marker, fingerprint
@@ -481,7 +489,7 @@ class PlaywrightSocinproSession:
             while time.monotonic() < deadline:
                 current = self._search_snapshot(page)
                 if current != before:
-                    self._confirm_search_proof(current, "DOM_MUTATION")
+                    self._confirm_search_proof(current, "RESULT_CONTAINER_MUTATION")
                     return
                 page.wait_for_timeout(SEARCH_POLL_MS)
             if self._search_ajax_observed:
@@ -498,6 +506,8 @@ class PlaywrightSocinproSession:
         self._search_diagnostics["SEARCH_ACTIVATION_CONFIRMED"] = True
         self._search_diagnostics["SEARCH_RESULT_REFRESH_CONFIRMED"] = True
         self._search_diagnostics["SEARCH_PROOF_METHOD"] = method
+        self._search_diagnostics["SEARCH_REQUEST_OBSERVED"] = method == "AJAX_REQUEST"
+        self._search_diagnostics["SEARCH_RESULT_CONTAINER_CHANGED"] = method == "RESULT_CONTAINER_MUTATION"
         self._search_diagnostics["REFRESHED_RESULT_EMPTY"] = row_count == 0 and empty_marker
 
     def _start_search_request_observer(self, page) -> None:
@@ -513,6 +523,15 @@ class PlaywrightSocinproSession:
             self._search_request_handler = None
         else:
             self._search_request_handler = request_observed
+
+    def _record_search_control_metadata(self, control) -> None:
+        """Record only safe control identity fields, never DOM content."""
+        try:
+            metadata = control.evaluate("element => ({tag: element.tagName, type: element.getAttribute('type')})")
+            self._search_diagnostics["SEARCH_RESOLVED_TAG"] = str(metadata.get("tag", "")).casefold() or None
+            self._search_diagnostics["SEARCH_RESOLVED_TYPE"] = metadata.get("type")
+        except Exception:
+            pass
 
     def _stop_search_request_observer(self, page) -> None:
         if self._search_request_handler is None:
