@@ -102,7 +102,8 @@ def run_smoke(args: argparse.Namespace) -> dict[str, object]:
             if account_result["status"] in {"PASS", "WAITING_HUMAN", "FAILED", "PORTAL_LAYOUT_REVIEW"}: break
         result["ACCOUNTS_COMPLETED"] = result["ACCOUNTS_ATTEMPTED"] - result["ACCOUNTS_WAITING_HUMAN"] - result["ACCOUNTS_FAILED"]
         result["UNIQUE_DOWNLOAD_COUNT"] = len(all_files)
-        result["SOCINPRO_REAL_SMOKE_STATUS"] = "PASS" if result["RAW_DOWNLOAD_COUNT"] else ("WAITING_HUMAN" if result["ACCOUNTS_WAITING_HUMAN"] else ("NO_PAYMENT_RANGE" if not result["ACCOUNTS_FAILED"] else "REVIEW"))
+        no_payment_status = "NO_PAYMENT" if result["PLANNED_ACCOUNT_COUNT"] == 1 else "NO_PAYMENT_RANGE"
+        result["SOCINPRO_REAL_SMOKE_STATUS"] = "PASS" if result["RAW_DOWNLOAD_COUNT"] else ("WAITING_HUMAN" if result["ACCOUNTS_WAITING_HUMAN"] else (no_payment_status if not result["ACCOUNTS_FAILED"] else "REVIEW"))
     except SocinproPortalRuntimeError as exc:
         result["SOCINPRO_REAL_SMOKE_STATUS"] = str(exc)
     finally:
