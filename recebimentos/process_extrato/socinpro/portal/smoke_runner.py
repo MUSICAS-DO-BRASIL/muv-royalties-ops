@@ -23,14 +23,26 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--entity", choices=("HM",), default="HM")
     parser.add_argument("--competence", default="2026-08")
     parser.add_argument("--account-limit", type=int, default=1)
+    parser.add_argument("--start-at", type=int, default=1)
+    parser.add_argument("--max-accounts", type=int, default=None)
+    parser.add_argument("--stop-after-first-download", action="store_true")
     parser.add_argument("--staging-root", type=Path, default=None)
     parser.add_argument("--browser-executable", default=os.environ.get("MUV_SOCINPRO_BROWSER_EXECUTABLE"))
     return parser
 
 
+def _planned_accounts(accounts, args):
+    if args.start_at < 1:
+        raise SocinproPortalRuntimeError("SMOKE_START_AT_INVALID")
+    max_accounts = args.max_accounts if args.max_accounts is not None else args.account_limit
+    if max_accounts < 1:
+        raise SocinproPortalRuntimeError("SMOKE_MAX_ACCOUNTS_INVALID")
+    if args.start_at > len(accounts):
+        raise SocinproPortalRuntimeError("SMOKE_START_AT_OUT_OF_RANGE")
+    return tuple(accounts[args.start_at - 1 : args.start_at - 1 + max_accounts])
+
+
 def run_smoke(args: argparse.Namespace) -> dict[str, object]:
-    if args.account_limit != 1:
-        raise SocinproPortalRuntimeError("SMOKE_ACCOUNT_LIMIT_MUST_BE_ONE")
     run_id = f"hm-socinpro-smoke-{uuid4().hex[:12]}"
     staging = (args.staging_root or Path(tempfile.gettempdir()) / "muv-socinpro-smoke" / run_id).resolve()
     result: dict[str, object] = {
@@ -38,67 +50,62 @@ def run_smoke(args: argparse.Namespace) -> dict[str, object]:
         "RUN_ID": run_id,
         "ENTITY": args.entity,
         "TARGET_COMPETENCE": args.competence,
-        "ACCOUNT_INDEX": None,
-        "IDENTIFIER_MASKED": None,
-        "BROWSER_STARTED": False,
-        "LOGIN_STATUS": "NOT_RUN",
-        "SESSION_VALIDATION": "NOT_RUN",
-        "CAPTCHA_DETECTED": False,
-        "MFA_DETECTED": False,
-        "COMPETENCE_SELECTION": "NOT_RUN",
-        "DOCUMENT_DISCOVERY": "NOT_RUN",
-        "DOWNLOAD_COUNT": 0,
         "STAGING_PATH": str(staging),
-        "SESSION_CLEANUP": "NOT_RUN",
-        "BROWSER_START_SECONDS": 0.0,
-        "LOGIN_SECONDS": 0.0,
-        "NAVIGATION_SECONDS": 0.0,
-        "DOWNLOAD_SECONDS": 0.0,
+        "PLANNED_ACCOUNT_START": None,
+        "PLANNED_ACCOUNT_END": None,
+        "PLANNED_ACCOUNT_COUNT": 0,
+        "ACCOUNTS_ATTEMPTED": 0,
+        "ACCOUNTS_COMPLETED": 0,
+        "ACCOUNTS_NO_PAYMENT": 0,
+        "ACCOUNTS_WAITING_HUMAN": 0,
+        "ACCOUNTS_FAILED": 0,
+        "FIRST_PAYMENT_ACCOUNT_INDEX": None,
+        "RAW_DOWNLOAD_COUNT": 0,
+        "UNIQUE_DOWNLOAD_COUNT": 0,
+        "STOPPED_AFTER_FIRST_DOWNLOAD": False,
+        "ACCOUNT_RESULTS": [],
         "TOTAL_ACCOUNT_SECONDS": 0.0,
         "PASSWORDS_EXPOSED": False,
         "OFFICIAL_FILES_CHANGED": False,
         "OFFICIAL_PUBLICATION_EXECUTED": False,
     }
     started = time.perf_counter()
-    session = None
     try:
         preflight = preflight_runtime_credentials(args.entity)
-        account = preflight.accounts[0]
-        result["ACCOUNT_INDEX"], result["IDENTIFIER_MASKED"] = account.index, account.masked_identifier
-        session = PlaywrightSocinproSession(BrowserSettings(staging_dir=staging, headed=True, executable_path=args.browser_executable))
-        login_started = time.perf_counter()
-        session.authenticate(account)
-        result["LOGIN_STATUS"] = result["SESSION_VALIDATION"] = "PASS"
-        result["LOGIN_SECONDS"] = round(time.perf_counter() - login_started, 3)
-        navigation_started = time.perf_counter()
-        session.select_competence(args.competence)
-        result["COMPETENCE_SELECTION"] = "PASS"
-        result["NAVIGATION_SECONDS"] = round(time.perf_counter() - navigation_started, 3)
-        download_started = time.perf_counter()
-        files = tuple(session.download_statements(account))
-        result["DOWNLOAD_SECONDS"] = round(time.perf_counter() - download_started, 3)
-        result["DOWNLOAD_COUNT"] = len(files)
-        result["DOCUMENT_DISCOVERY"] = "PASS" if files else "NO_PAYMENT"
-        result["SOCINPRO_REAL_SMOKE_STATUS"] = "PASS" if files else "NO_PAYMENT"
-    except HumanInterventionRequired as exc:
-        result["SOCINPRO_REAL_SMOKE_STATUS"] = "WAITING_HUMAN"
-        result["LOGIN_STATUS"] = "WAITING_HUMAN"
-        result["CAPTCHA_DETECTED"] = exc.category == "CAPTCHA_REQUIRED"
-        result["MFA_DETECTED"] = exc.category == "MFA_REQUIRED"
-    except PortalAdapterError as exc:
-        status = "PORTAL_LAYOUT_REVIEW" if exc.category in {"UNEXPECTED_PAGE", "COMPETENCE_SELECTION_FAILED", "DOCUMENT_DISCOVERY_FAILED"} else exc.category
-        result["SOCINPRO_REAL_SMOKE_STATUS"] = status
-        result["LOGIN_STATUS"] = status if result["LOGIN_STATUS"] == "NOT_RUN" else result["LOGIN_STATUS"]
+        planned = _planned_accounts(preflight.accounts, args)
+        result["PLANNED_ACCOUNT_START"], result["PLANNED_ACCOUNT_END"], result["PLANNED_ACCOUNT_COUNT"] = planned[0].index, planned[-1].index, len(planned)
+        all_files: set[str] = set()
+        for account in planned:
+            account_result = {"account_index": account.index, "masked_identifier": account.masked_identifier, "status": "FAILED", "login_seconds": 0.0, "navigation_seconds": 0.0, "download_seconds": 0.0, "download_count": 0, "captcha_detected": False, "mfa_detected": False, "session_cleanup": "NOT_RUN"}
+            session = PlaywrightSocinproSession(BrowserSettings(staging_dir=staging, headed=True, executable_path=args.browser_executable))
+            result["ACCOUNTS_ATTEMPTED"] += 1
+            try:
+                point = time.perf_counter(); session.authenticate(account); account_result["login_seconds"] = round(time.perf_counter() - point, 3)
+                point = time.perf_counter(); session.select_competence(args.competence); account_result["navigation_seconds"] = round(time.perf_counter() - point, 3)
+                point = time.perf_counter(); files = tuple(session.download_statements(account)); account_result["download_seconds"] = round(time.perf_counter() - point, 3)
+                account_result["download_count"] = len(files)
+                if files:
+                    valid = [item for item in files if item.is_file() and item.stat().st_size > 0 and item.suffix.casefold() not in {".crdownload", ".part"} and staging in item.resolve().parents]
+                    if len(valid) != len(files): raise PortalAdapterError("DOWNLOAD_INVALID")
+                    account_result["status"] = "PASS"; result["FIRST_PAYMENT_ACCOUNT_INDEX"] = account.index; result["RAW_DOWNLOAD_COUNT"] += len(valid); all_files.update(str(item.resolve()) for item in valid)
+                    if args.stop_after_first_download: result["STOPPED_AFTER_FIRST_DOWNLOAD"] = True
+                else:
+                    account_result["status"] = "NO_PAYMENT"; result["ACCOUNTS_NO_PAYMENT"] += 1
+            except HumanInterventionRequired as exc:
+                account_result["status"] = "WAITING_HUMAN"; account_result["captcha_detected"] = exc.category == "CAPTCHA_REQUIRED"; account_result["mfa_detected"] = exc.category == "MFA_REQUIRED"; result["ACCOUNTS_WAITING_HUMAN"] += 1
+            except PortalAdapterError as exc:
+                account_result["status"] = "PORTAL_LAYOUT_REVIEW" if exc.category in {"UNEXPECTED_PAGE", "COMPETENCE_SELECTION_FAILED", "DOCUMENT_DISCOVERY_FAILED"} else "FAILED"; result["ACCOUNTS_FAILED"] += 1
+            finally:
+                try: session.close(); account_result["session_cleanup"] = "PASS"
+                except Exception: account_result["session_cleanup"] = "FAIL"
+            result["ACCOUNT_RESULTS"].append(account_result)
+            if account_result["status"] in {"PASS", "WAITING_HUMAN", "FAILED", "PORTAL_LAYOUT_REVIEW"}: break
+        result["ACCOUNTS_COMPLETED"] = result["ACCOUNTS_ATTEMPTED"] - result["ACCOUNTS_WAITING_HUMAN"] - result["ACCOUNTS_FAILED"]
+        result["UNIQUE_DOWNLOAD_COUNT"] = len(all_files)
+        result["SOCINPRO_REAL_SMOKE_STATUS"] = "PASS" if result["RAW_DOWNLOAD_COUNT"] else ("WAITING_HUMAN" if result["ACCOUNTS_WAITING_HUMAN"] else ("NO_PAYMENT_RANGE" if not result["ACCOUNTS_FAILED"] else "REVIEW"))
     except SocinproPortalRuntimeError as exc:
         result["SOCINPRO_REAL_SMOKE_STATUS"] = str(exc)
     finally:
-        if session is not None:
-            try:
-                session.close()
-                result["SESSION_CLEANUP"] = "PASS"
-            except Exception:
-                result["SESSION_CLEANUP"] = "FAIL"
-            result["BROWSER_STARTED"] = bool(getattr(session, "browser_started", False))
         result["TOTAL_ACCOUNT_SECONDS"] = round(time.perf_counter() - started, 3)
     return result
 
