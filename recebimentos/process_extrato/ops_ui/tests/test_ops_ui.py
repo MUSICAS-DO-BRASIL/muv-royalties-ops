@@ -3,6 +3,7 @@ from datetime import date
 import pytest
 
 from ops_ui.context import OpsContext, resolve_competence
+from ops_ui.presentation import brl, status_class
 from ops_ui.providers import DemoOpsDataProvider, LiveProviderUnavailable, provider_from_environment
 from ops_ui.services import MonthPreparationAdapter, close_action
 
@@ -53,3 +54,19 @@ def test_close_control_fails_closed():
     action = close_action()
     assert action.allowed is False
     assert "auditado" in action.detail
+
+
+def test_brl_formatting_is_complete_and_localized():
+    from decimal import Decimal
+
+    assert brl(Decimal("12500")) == "R$ 12.500,00"
+    assert brl(Decimal("11800")) == "R$ 11.800,00"
+    assert brl(Decimal("700")) == "R$ 700,00"
+    assert "..." not in brl(Decimal("12500"))
+
+
+def test_status_badges_have_a_shared_presentation_mapping():
+    assert status_class("PASS") == "ok"
+    assert status_class("RECEBIDO") == "ok"
+    assert status_class("REVISÃO NECESSÁRIA") == "warn"
+    assert status_class("BLOQUEADO") == "bad"
