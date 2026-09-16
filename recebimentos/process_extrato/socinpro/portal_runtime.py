@@ -35,6 +35,11 @@ class SocinproPortalRuntimeError(ValueError):
 class HumanInterventionRequired(RuntimeError):
     """Raised by a browser adapter when CAPTCHA or MFA needs an operator."""
 
+    def __init__(self, category: str, instruction: str):
+        super().__init__(category)
+        self.category = category
+        self.instruction = instruction
+
 
 @dataclass(frozen=True)
 class RuntimeAccount:
@@ -78,6 +83,8 @@ class PortalAccountSession(Protocol):
     def select_competence(self, competence: str) -> None: ...
 
     def download_statements(self, account: RuntimeAccount) -> Iterable[Path]: ...
+
+    def close(self) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -143,10 +150,15 @@ def run_portal_download(
             session.authenticate(account)
             session.select_competence(competence)
             files = tuple(session.download_statements(account))
-            results.append(AccountDownloadResult(account.index, account.masked_identifier, "DOWNLOADED", files))
+            status = "DOWNLOADED" if files else "NO_PAYMENT"
+            results.append(AccountDownloadResult(account.index, account.masked_identifier, status, files))
         except HumanInterventionRequired:
             results.append(AccountDownloadResult(account.index, account.masked_identifier, "HUMAN_INTERVENTION_REQUIRED"))
             break
+        finally:
+            close = getattr(locals().get("session"), "close", None)
+            if callable(close):
+                close()
     return tuple(results)
 
 
