@@ -5,7 +5,7 @@ from openpyxl import Workbook, load_workbook
 import pytest
 
 from bank_extraction_core import SafraWorksheetRow
-from mdb_safra_worksheet_writer import MdbSafraWorksheetWriter
+from mdb_safra_worksheet_writer import MdbSafraWorksheetWriter, SyntheticOpenpyxlWorkbookBackend
 
 
 HEADERS = ["data", "lancamento", "complemento", "documento", "valor_str", "valor", "Fonte Pagadora"]
@@ -32,7 +32,7 @@ def _rows(status="PASS"):
 def test_writer_writes_complete_a_to_g_and_preserves_unrelated_sheet(tmp_path):
     path = tmp_path / "safra-sintetico.xlsx"
     _book(path)
-    MdbSafraWorksheetWriter().write(path, _rows())
+    MdbSafraWorksheetWriter(backend=SyntheticOpenpyxlWorkbookBackend()).write(path, _rows())
 
     book = load_workbook(path, data_only=False)
     sheet = book["Safra"]
@@ -51,7 +51,7 @@ def test_writer_writes_complete_a_to_g_and_preserves_unrelated_sheet(tmp_path):
 def test_writer_accepts_operational_headers_linked_to_bs(tmp_path):
     path = tmp_path / "linked-headers.xlsx"
     _book(path, [f"=bs!{column}1" for column in "ABCDEF"] + ["Fonte Pagadora"])
-    MdbSafraWorksheetWriter().write(path, _rows())
+    MdbSafraWorksheetWriter(backend=SyntheticOpenpyxlWorkbookBackend()).write(path, _rows())
     book = load_workbook(path, data_only=False)
     assert [book["Safra"].cell(1, column).value for column in range(1, 7)] == [f"=bs!{column}1" for column in "ABCDEF"]
     assert book["Safra"]["G2"].value == "Fonte A"
@@ -67,14 +67,14 @@ def test_writer_blocks_invalid_headers_or_missing_safra_sheet(tmp_path, headers,
     path = tmp_path / "invalid.xlsx"
     _book(path, headers, safra=safra)
     with pytest.raises(ValueError):
-        MdbSafraWorksheetWriter().write(path, _rows())
+        MdbSafraWorksheetWriter(backend=SyntheticOpenpyxlWorkbookBackend()).write(path, _rows())
 
 
 def test_writer_blocks_review_rows_and_existing_data(tmp_path):
     path = tmp_path / "review.xlsx"
     _book(path)
     with pytest.raises(ValueError):
-        MdbSafraWorksheetWriter().write(path, _rows("REVIEW"))
+        MdbSafraWorksheetWriter(backend=SyntheticOpenpyxlWorkbookBackend()).write(path, _rows("REVIEW"))
 
     _book(path)
     book = load_workbook(path)
@@ -82,4 +82,4 @@ def test_writer_blocks_review_rows_and_existing_data(tmp_path):
     book.save(path)
     book.close()
     with pytest.raises(ValueError):
-        MdbSafraWorksheetWriter().write(path, _rows())
+        MdbSafraWorksheetWriter(backend=SyntheticOpenpyxlWorkbookBackend()).write(path, _rows())

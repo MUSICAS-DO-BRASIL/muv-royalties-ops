@@ -67,10 +67,11 @@ class SocinproMapping:
 def parse_payment_pdf(path: str | Path, *, source_reference: str | None = None) -> ParsedSocinproPayment:
     """Parse the text-based SOCINPRO demonstrativo layout recovered from legacy.
 
+    Relative paths resolve against the working directory at call time.
     Only the financial ``Pagamento efetuado`` layout is accepted. Detailed
     distribution statements and PDFs without text remain unsupported by design.
     """
-    candidate = Path(path)
+    candidate = Path(path).resolve()
     if candidate.suffix.casefold() != ".pdf" or not candidate.is_file():
         raise SocinproIngestionError("PDF_SOCINPRO_INVALIDO")
     try:
@@ -84,8 +85,8 @@ def parse_payment_pdf(path: str | Path, *, source_reference: str | None = None) 
 
 
 def parse_payment_workbook(path: str | Path, *, source_reference: str | None = None) -> tuple[ParsedSocinproPayment, ...]:
-    """Read the proven legacy 'pagamentos' projection without writing it."""
-    candidate = Path(path)
+    """Read pagamentos without writing; relative paths use the caller's cwd."""
+    candidate = Path(path).resolve()
     if candidate.suffix.casefold() not in {".xlsx", ".xlsm"} or not candidate.is_file():
         raise SocinproIngestionError("WORKBOOK_SOCINPRO_INVALIDO")
     try:

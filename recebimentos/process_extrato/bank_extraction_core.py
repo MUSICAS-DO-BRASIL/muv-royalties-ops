@@ -11,12 +11,15 @@ from decimal import Decimal
 from hashlib import sha256
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Callable, Literal
+from typing import TYPE_CHECKING, Callable, Literal
 import importlib.util
 import json
 import os
 import re
 import sys
+
+if TYPE_CHECKING:
+    from mdb_safra_worksheet_writer import MdbSafraWorksheetWriter
 
 ROOT = Path(os.environ.get("MUV_OPERATIONAL_ROOT") or Path(__file__).resolve().parents[2]).expanduser()
 PROCESS_ROOT = Path(__file__).resolve().parent
@@ -186,11 +189,13 @@ class BankExtractionService:
         mdb_template_path: str | Path | None = None,
         monthly_root: str | Path | None = None,
         mdb_safra_sheet_name: str = "Safra",
+        mdb_writer: MdbSafraWorksheetWriter | None = None,
     ) -> None:
         self._adapters = {"HM": BTGAdapter(), "MDB": SafraAdapter()}
         self._mdb_template_path = Path(mdb_template_path) if mdb_template_path is not None else None
         self._monthly_root = Path(monthly_root) if monthly_root is not None else ROOT
         self._mdb_safra_sheet_name = mdb_safra_sheet_name
+        self._mdb_writer = mdb_writer
 
     def process(self, *, entity: str, period: str, source_path: str | Path) -> BankExtractionResult:
         if entity not in ENTITY_BANK:
@@ -247,7 +252,7 @@ class BankExtractionService:
             with TemporaryDirectory(prefix="muv-hm-bootstrap-") as temp:
                 statement = Path(temp) / source_name
                 statement.write_bytes(source_bytes)
-                context = bootstrap.prepare_hm_month(period=period, btg_statement=statement, monthly_root=ROOT)
+                context = bootstrap.prepare_hm_month(period=period, btg_statement=statement, monthly_root=self._monthly_root)
             return context.validation_status, "; ".join(context.review_reasons)
         if entity != "MDB":
             return "BLOCKED", "Entidade inválida para preparação mensal."
@@ -260,6 +265,7 @@ class BankExtractionService:
             template_path=self._mdb_template_path,
             monthly_root=self._monthly_root,
             layout=facade_module.MdbWorkbookLayout(safra_sheet_name=self._mdb_safra_sheet_name),
+            writer=self._mdb_writer,
         )
         try:
             with TemporaryDirectory(prefix="muv-mdb-bootstrap-") as temp:

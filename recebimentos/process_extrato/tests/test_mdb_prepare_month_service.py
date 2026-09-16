@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from bank_extraction_core import BankExtractionService
+from mdb_safra_worksheet_writer import MdbSafraWorksheetWriter, SyntheticOpenpyxlWorkbookBackend
 
 
 class _Page:
@@ -61,7 +62,7 @@ def test_mdb_prepare_month_uses_real_facade_and_is_create_only(monkeypatch, tmp_
     _map(tmp_path / "map.json", [{"bank_payor_alias": "PAGADOR TESTE", "canonical_royalty_source": "Fonte Teste"}])
     monkeypatch.setenv("MUV_SAFRA_SOURCE_MAP", str(tmp_path / "map.json"))
     monkeypatch.setattr(pdfplumber, "open", lambda _: _Pdf())
-    service = BankExtractionService(mdb_template_path=template, monthly_root=tmp_path, mdb_safra_sheet_name=sheet_name)
+    service = BankExtractionService(mdb_template_path=template, monthly_root=tmp_path, mdb_safra_sheet_name=sheet_name, mdb_writer=MdbSafraWorksheetWriter(backend=SyntheticOpenpyxlWorkbookBackend()))
 
     first_status, first_detail = service.prepare_month(
         entity="MDB", period="2026-09", source_bytes=b"synthetic", source_name="statement.pdf"
@@ -131,3 +132,18 @@ def test_mdb_prepare_month_blocks_missing_configured_safra_sheet(monkeypatch, tm
     status, _ = service.prepare_month(entity="MDB", period="2026-09", source_bytes=b"synthetic", source_name="statement.pdf")
     final = tmp_path / "2026" / "092026" / "MDB" / "Conciliação - Músicas do Brasil_202609.xlsx"
     assert status == "BLOCKED" and not final.exists()
+
+
+def test_mdb_production_service_blocks_non_windows_without_publication(monkeypatch, tmp_path):
+    monkeypatch.setattr(sys, "platform", "darwin")
+    template = tmp_path / "template.xlsx"
+    _template(template)
+    original = template.read_bytes()
+    _map(tmp_path / "map.json", [{"bank_payor_alias": "PAGADOR TESTE", "canonical_royalty_source": "Fonte Teste"}])
+    monkeypatch.setenv("MUV_SAFRA_SOURCE_MAP", str(tmp_path / "map.json"))
+    monkeypatch.setattr(pdfplumber, "open", lambda _: _Pdf())
+    service = BankExtractionService(mdb_template_path=template, monthly_root=tmp_path / "blocked-production-months")
+    status, detail = service.prepare_month(entity="MDB", period="2026-09", source_bytes=b"synthetic", source_name="statement.pdf")
+    assert status == "BLOCKED" and "requires Windows" in detail
+    assert not (tmp_path / "blocked-production-months").exists()
+    assert template.read_bytes() == original

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, time
-import importlib.util
+import sys
 from pathlib import Path
 import unicodedata
 
@@ -21,9 +21,15 @@ class MdbWorkbookLayout:
     safra_sheet_name: str
 
 
+class UnsupportedWorkbookPlatformError(RuntimeError):
+    """The operational workbook backend cannot run on this platform."""
+
+
 class ExcelComWorkbookBackend:
     """Windows-only operational XLSX mutation backend; preserves native features."""
     def write_safra_rows(self, path: str | Path, rows: tuple[SafraWorksheetRow, ...], layout: MdbWorkbookLayout) -> None:
+        if sys.platform != "win32":
+            raise UnsupportedWorkbookPlatformError("Excel COM operational workbook backend requires Windows.")
         import pythoncom
         import win32com.client
         app = workbook = None
@@ -50,7 +56,7 @@ class ExcelComWorkbookBackend:
 
 
 class SyntheticOpenpyxlWorkbookBackend:
-    """Non-production backend used only where pywin32 is unavailable in tests."""
+    """Non-production backend; synthetic callers must inject it explicitly."""
     def write_safra_rows(self, path, rows, layout) -> None:
         workbook = load_workbook(path)
         try:
@@ -79,8 +85,8 @@ def _has_expected_headers(sheet) -> bool:
 class MdbSafraWorksheetWriter:
     """Write validated Safra rich rows without touching MDB mappings or other sheets."""
 
-    def __init__(self, backend: ExcelComWorkbookBackend | None = None) -> None:
-        self.backend = backend or (ExcelComWorkbookBackend() if importlib.util.find_spec("pythoncom") else SyntheticOpenpyxlWorkbookBackend())
+    def __init__(self, backend: ExcelComWorkbookBackend | SyntheticOpenpyxlWorkbookBackend | None = None) -> None:
+        self.backend = backend if backend is not None else ExcelComWorkbookBackend()
 
     def write(self, path: str | Path, rows: tuple[SafraWorksheetRow, ...], *, layout: MdbWorkbookLayout = MdbWorkbookLayout("Safra")) -> None:
         workbook = load_workbook(path, data_only=False, keep_links=True)

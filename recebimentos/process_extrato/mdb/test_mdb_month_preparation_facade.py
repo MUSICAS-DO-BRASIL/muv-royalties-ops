@@ -9,6 +9,7 @@ from openpyxl import Workbook, load_workbook
 
 from bank_extraction_core import SafraAdapter, SafraExtractionResult
 from mdb_month_preparation_facade import MdbMonthPreparationFacade
+from mdb_safra_worksheet_writer import MdbSafraWorksheetWriter, SyntheticOpenpyxlWorkbookBackend
 
 
 class _Page:
@@ -40,7 +41,7 @@ def test_mdb_facade_happy_path_uses_real_safra_pipeline(monkeypatch, tmp_path):
     monkeypatch.setattr(pdfplumber, "open", lambda _: _Pdf())
     result = SafraAdapter().extract(source, "2026-09")
     assert isinstance(result, SafraExtractionResult)
-    outcome = MdbMonthPreparationFacade(template_path=template, monthly_root=tmp_path).prepare(result, "2026-09")
+    outcome = MdbMonthPreparationFacade(template_path=template, monthly_root=tmp_path, writer=MdbSafraWorksheetWriter(backend=SyntheticOpenpyxlWorkbookBackend())).prepare(result, "2026-09")
     expected = tmp_path / "2026" / "092026" / "MDB" / "Conciliação - Músicas do Brasil_202609.xlsx"
     assert outcome.status == "PREPARED" and outcome.workbook_path == expected and expected.is_file()
     output = load_workbook(expected); safra = output["Safra"]; row = result.safra_rows[0]
@@ -61,7 +62,7 @@ def test_mdb_facade_second_run_is_create_only(monkeypatch, tmp_path):
     source_map = tmp_path / "map.json"; source_map.write_text(json.dumps({"aliases":[{"bank_payor_alias":"PAGADOR TESTE","canonical_royalty_source":"Fonte Teste"}]}), encoding="utf-8")
     monkeypatch.setenv("MUV_SAFRA_SOURCE_MAP", str(source_map)); monkeypatch.setattr(pdfplumber, "open", lambda _: _Pdf())
     result = SafraAdapter().extract(source, "2026-09")
-    facade = MdbMonthPreparationFacade(template_path=template, monthly_root=tmp_path)
+    facade = MdbMonthPreparationFacade(template_path=template, monthly_root=tmp_path, writer=MdbSafraWorksheetWriter(backend=SyntheticOpenpyxlWorkbookBackend()))
     first = facade.prepare(result, "2026-09")
     assert first.status == "PREPARED" and first.workbook_path is not None
     first_hash = sha256(first.workbook_path.read_bytes()).hexdigest(); first_size = first.workbook_path.stat().st_size
@@ -102,7 +103,7 @@ def test_mdb_facade_blocks_review_rich_row(monkeypatch, tmp_path):
     result = SafraAdapter().extract(source, "2026-09")
     review_row = replace(result.safra_rows[0], status="REVIEW")
     reviewed = replace(result, safra_rows=(review_row,))
-    outcome = MdbMonthPreparationFacade(template_path=template, monthly_root=tmp_path).prepare(reviewed, "2026-09")
+    outcome = MdbMonthPreparationFacade(template_path=template, monthly_root=tmp_path, writer=MdbSafraWorksheetWriter(backend=SyntheticOpenpyxlWorkbookBackend())).prepare(reviewed, "2026-09")
     final = tmp_path / "2026" / "092026" / "MDB" / "Conciliação - Músicas do Brasil_202609.xlsx"
     assert outcome.status == "BLOCKED" and not final.exists()
     assert sha256(template.read_bytes()).hexdigest() == template_hash
@@ -113,7 +114,7 @@ def test_mdb_facade_blocks_missing_template(monkeypatch, tmp_path):
     source_map = tmp_path / "map.json"; source_map.write_text(json.dumps({"aliases":[{"bank_payor_alias":"PAGADOR TESTE","canonical_royalty_source":"Fonte Teste"}]}))
     monkeypatch.setenv("MUV_SAFRA_SOURCE_MAP", str(source_map)); monkeypatch.setattr(pdfplumber, "open", lambda _: _Pdf())
     result = SafraAdapter().extract(source, "2026-09")
-    outcome = MdbMonthPreparationFacade(template_path=tmp_path / "missing.xlsx", monthly_root=tmp_path).prepare(result, "2026-09")
+    outcome = MdbMonthPreparationFacade(template_path=tmp_path / "missing.xlsx", monthly_root=tmp_path, writer=MdbSafraWorksheetWriter(backend=SyntheticOpenpyxlWorkbookBackend())).prepare(result, "2026-09")
     final = tmp_path / "2026" / "092026" / "MDB" / "Conciliação - Músicas do Brasil_202609.xlsx"
     assert outcome.status == "BLOCKED" and not final.exists()
 
@@ -125,7 +126,7 @@ def test_mdb_facade_blocks_invalid_template(monkeypatch, tmp_path):
     source_map = tmp_path / "map.json"; source_map.write_text(json.dumps({"aliases":[{"bank_payor_alias":"PAGADOR TESTE","canonical_royalty_source":"Fonte Teste"}]}))
     monkeypatch.setenv("MUV_SAFRA_SOURCE_MAP", str(source_map)); monkeypatch.setattr(pdfplumber, "open", lambda _: _Pdf())
     result = SafraAdapter().extract(source, "2026-09")
-    outcome = MdbMonthPreparationFacade(template_path=template, monthly_root=tmp_path).prepare(result, "2026-09")
+    outcome = MdbMonthPreparationFacade(template_path=template, monthly_root=tmp_path, writer=MdbSafraWorksheetWriter(backend=SyntheticOpenpyxlWorkbookBackend())).prepare(result, "2026-09")
     final = tmp_path / "2026" / "092026" / "MDB" / "Conciliação - Músicas do Brasil_202609.xlsx"
     assert outcome.status == "BLOCKED" and not final.exists()
     assert sha256(template.read_bytes()).hexdigest() == template_hash
@@ -139,7 +140,7 @@ def test_mdb_facade_blocks_template_without_safra_sheet(monkeypatch, tmp_path):
     source_map = tmp_path / "map.json"; source_map.write_text(json.dumps({"aliases":[{"bank_payor_alias":"PAGADOR TESTE","canonical_royalty_source":"Fonte Teste"}]}))
     monkeypatch.setenv("MUV_SAFRA_SOURCE_MAP", str(source_map)); monkeypatch.setattr(pdfplumber, "open", lambda _: _Pdf())
     result = SafraAdapter().extract(source, "2026-09")
-    outcome = MdbMonthPreparationFacade(template_path=template, monthly_root=tmp_path).prepare(result, "2026-09")
+    outcome = MdbMonthPreparationFacade(template_path=template, monthly_root=tmp_path, writer=MdbSafraWorksheetWriter(backend=SyntheticOpenpyxlWorkbookBackend())).prepare(result, "2026-09")
     final = tmp_path / "2026" / "092026" / "MDB" / "Conciliação - Músicas do Brasil_202609.xlsx"
     assert outcome.status == "BLOCKED" and not final.exists()
     assert sha256(template.read_bytes()).hexdigest() == template_hash
@@ -153,7 +154,7 @@ def test_mdb_facade_blocks_invalid_safra_header(monkeypatch, tmp_path):
     source_map = tmp_path / "map.json"; source_map.write_text(json.dumps({"aliases":[{"bank_payor_alias":"PAGADOR TESTE","canonical_royalty_source":"Fonte Teste"}]}))
     monkeypatch.setenv("MUV_SAFRA_SOURCE_MAP", str(source_map)); monkeypatch.setattr(pdfplumber, "open", lambda _: _Pdf())
     result = SafraAdapter().extract(source, "2026-09")
-    outcome = MdbMonthPreparationFacade(template_path=template, monthly_root=tmp_path).prepare(result, "2026-09")
+    outcome = MdbMonthPreparationFacade(template_path=template, monthly_root=tmp_path, writer=MdbSafraWorksheetWriter(backend=SyntheticOpenpyxlWorkbookBackend())).prepare(result, "2026-09")
     final = tmp_path / "2026" / "092026" / "MDB" / "Conciliação - Músicas do Brasil_202609.xlsx"
     assert outcome.status == "BLOCKED" and not final.exists()
 
@@ -169,7 +170,7 @@ def test_mdb_facade_blocks_incompatible_bank_result(monkeypatch, tmp_path):
     source_map = tmp_path / "map.json"; source_map.write_text(json.dumps({"aliases":[{"bank_payor_alias":"PAGADOR TESTE","canonical_royalty_source":"Fonte Teste"}]}))
     monkeypatch.setenv("MUV_SAFRA_SOURCE_MAP", str(source_map)); monkeypatch.setattr(pdfplumber, "open", lambda _: _Pdf())
     result = replace(SafraAdapter().extract(source, "2026-09"), entity="HM")
-    outcome = MdbMonthPreparationFacade(template_path=template, monthly_root=tmp_path).prepare(result, "2026-09")
+    outcome = MdbMonthPreparationFacade(template_path=template, monthly_root=tmp_path, writer=MdbSafraWorksheetWriter(backend=SyntheticOpenpyxlWorkbookBackend())).prepare(result, "2026-09")
     final = tmp_path / "2026" / "092026" / "MDB" / "Conciliação - Músicas do Brasil_202609.xlsx"
     assert outcome.status == "BLOCKED" and outcome.workbook_path is None
     assert outcome.errors == ("Resultado Safra inválido para MDB.",)
@@ -189,7 +190,7 @@ def test_mdb_facade_blocks_competence_mismatch(monkeypatch, tmp_path):
     monkeypatch.setenv("MUV_SAFRA_SOURCE_MAP", str(source_map)); monkeypatch.setattr(pdfplumber, "open", lambda _: _Pdf())
     result = replace(SafraAdapter().extract(source, "2026-09"), period="2026-08")
     assert result.entity == "MDB" and result.bank_source == "SAFRA" and result.safra_rows
-    outcome = MdbMonthPreparationFacade(template_path=template, monthly_root=tmp_path).prepare(result, "2026-09")
+    outcome = MdbMonthPreparationFacade(template_path=template, monthly_root=tmp_path, writer=MdbSafraWorksheetWriter(backend=SyntheticOpenpyxlWorkbookBackend())).prepare(result, "2026-09")
     august_final = tmp_path / "2026" / "082026" / "MDB" / "Conciliação - Músicas do Brasil_202608.xlsx"
     september_final = tmp_path / "2026" / "092026" / "MDB" / "Conciliação - Músicas do Brasil_202609.xlsx"
     assert outcome.status == "BLOCKED" and outcome.workbook_path is None
@@ -210,7 +211,7 @@ def test_mdb_facade_blocks_bank_source_mismatch(monkeypatch, tmp_path):
     monkeypatch.setenv("MUV_SAFRA_SOURCE_MAP", str(source_map)); monkeypatch.setattr(pdfplumber, "open", lambda _: _Pdf())
     result = replace(SafraAdapter().extract(source, "2026-09"), bank_source="BTG")
     assert result.entity == "MDB" and result.period == "2026-09" and result.safra_rows
-    outcome = MdbMonthPreparationFacade(template_path=template, monthly_root=tmp_path).prepare(result, "2026-09")
+    outcome = MdbMonthPreparationFacade(template_path=template, monthly_root=tmp_path, writer=MdbSafraWorksheetWriter(backend=SyntheticOpenpyxlWorkbookBackend())).prepare(result, "2026-09")
     final = tmp_path / "2026" / "092026" / "MDB" / "Conciliação - Músicas do Brasil_202609.xlsx"
     assert outcome.status == "BLOCKED" and outcome.workbook_path is None
     assert outcome.errors == ("Resultado Safra inválido para MDB.",)

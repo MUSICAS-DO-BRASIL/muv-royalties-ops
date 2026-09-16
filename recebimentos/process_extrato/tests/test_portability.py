@@ -11,6 +11,7 @@ from streamlit.testing.v1 import AppTest
 @pytest.mark.parametrize("module", [
     "bank_extraction_core", "btg_statement_parser", "btg_bank_adapter",
     "safra_royalties_classifier", "month_preparation", "hm_month_bootstrap",
+    "process_safra_mp_toyalties", "mdb_safra_worksheet_writer", "mdb_month_preparation_facade",
     "cloud_aware_workbook_publisher", "cloud_native_workbook_publisher",
     "bank_extraction_app_v2", "socinpro.socinpro_vertical", "socinpro.real_ingestion",
 ])
