@@ -1,0 +1,57 @@
+# Deny by default. Only build manifests and reviewed Python sources enter context.
+**
+!Dockerfile
+!.dockerignore
+!requirements.txt
+!requirements-container.txt
+!requirements-dev.txt
+!pyproject.toml
+!recebimentos/
+!recebimentos/process_extrato/
+!recebimentos/process_extrato/**/
+!recebimentos/process_extrato/**/*.py
+# Defense in depth, including secrets disguised as Python files.
+**/.git
+**/.venv
+**/venv
+**/__pycache__
+**/.pytest_cache
+**/.env*
+**/*credential*
+**/*secret*
+**/*token*
+**/*cookie*
+**/*profile*
+**/*.pem
+**/*.key
+**/*.pdf
+**/*.PDF
+**/*.xlsx
+**/*.XLSX
+**/*.xls*
+**/*.csv
+**/*.sqlite*
+**/*.db
+**/input*
+**/output*
+**/tmp
+**/temp
+**/cache*
+**/downloads
+**/staging
+**/raw
+**/e
+**/s
+**/state
+**/logs
+**/technical_artifacts
+**/runs
+
+# Unused source-tree docs/examples; tests generate their own synthetic mappings.
+**/*.md
+**/*.json
+
+# Host backup utility is copied only into the explicit test target.
+!scripts/
+scripts/*
+!scripts/backup_postgres.py

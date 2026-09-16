@@ -1,0 +1,3 @@
+-r requirements.txt
+# Portable binary driver, isolated from the existing Windows runtime requirements.
+psycopg[binary]==3.3.5
