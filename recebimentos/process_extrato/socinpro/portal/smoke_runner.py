@@ -30,6 +30,7 @@ _DIAGNOSTIC_KEYS = {
     "END_DATE_MATCH", "DATE_RANGE_VALIDATION", "DATE_MUTATION_COMPLETE", "DATE_READBACK_COMPLETE", "DATE_CONTROLS_SETTLED", "COMPETENCE_FAILURE_REASON", "ACTUAL_START_DATE", "ACTUAL_END_DATE",
     "SEARCH_CONTROL_FOUND", "SEARCH_ACTIONABLE_CONTROL_RESOLVED", "SEARCH_RESOLVED_TAG", "SEARCH_RESOLVED_TYPE", "SEARCH_ACTIVATION_ATTEMPTED", "SEARCH_REQUEST_OBSERVED", "SEARCH_RESULT_CONTAINER_CHANGED", "SEARCH_ACTIVATION_CONFIRMED", "SEARCH_RESULT_REFRESH_CONFIRMED", "SEARCH_PROOF_METHOD", "PRE_SEARCH_ROW_COUNT", "PRE_SEARCH_EMPTY_MARKER_PRESENT", "PRE_SEARCH_RESULT_FINGERPRINT", "REFRESHED_RESULT_EMPTY",
     "DEMONSTRATIVO_CONFIRM_SECONDS", "START_DATE_LOCATOR_SECONDS", "START_DATE_SET_SECONDS", "START_DATE_READBACK_SECONDS", "END_DATE_LOCATOR_SECONDS", "END_DATE_SET_SECONDS", "END_DATE_READBACK_SECONDS", "DATE_VALIDATION_SECONDS", "SEARCH_CONTROL_LOCATOR_SECONDS", "SEARCH_ACTIVATION_SECONDS", "SEARCH_REFRESH_SECONDS", "COMPETENCE_TOTAL_SECONDS",
+    "PAYMENT_ROWS_DISCOVERED", "PAYMENT_ROWS_PROCESSED", "DOWNLOAD_ACTIONS_DISCOVERED", "DOWNLOAD_ACTIONS_COMPLETED",
 }
 
 
@@ -115,6 +116,7 @@ def run_smoke(args: argparse.Namespace) -> dict[str, object]:
         "UNIQUE_DOWNLOAD_COUNT": 0,
         "STOPPED_AFTER_FIRST_DOWNLOAD": False,
         "ACCOUNT_RESULTS": [],
+        "DOWNLOAD_MANIFEST": [],
         "TOTAL_ACCOUNT_SECONDS": 0.0,
         "PASSWORDS_EXPOSED": False,
         "OFFICIAL_FILES_CHANGED": False,
@@ -127,14 +129,16 @@ def run_smoke(args: argparse.Namespace) -> dict[str, object]:
         result["PLANNED_ACCOUNT_START"], result["PLANNED_ACCOUNT_END"], result["PLANNED_ACCOUNT_COUNT"] = planned[0].index, planned[-1].index, len(planned)
         all_files: set[str] = set()
         for account in planned:
-            account_result = {"account_index": account.index, "masked_identifier": account.masked_identifier, "status": "FAILED", "login_seconds": 0.0, "navigation_seconds": 0.0, "download_seconds": 0.0, "download_count": 0, "captcha_detected": False, "mfa_detected": False, "navigation_diagnostics": {}, "failure_stage": None, "failure_reason": None, "exception_class_safe": None, "session_cleanup": "NOT_RUN"}
-            session = PlaywrightSocinproSession(BrowserSettings(staging_dir=staging, headed=True, executable_path=args.browser_executable))
+            account_result = {"account_index": account.index, "masked_identifier": account.masked_identifier, "status": "FAILED", "login_seconds": 0.0, "navigation_seconds": 0.0, "download_seconds": 0.0, "download_count": 0, "download_manifest": [], "captcha_detected": False, "mfa_detected": False, "navigation_diagnostics": {}, "failure_stage": None, "failure_reason": None, "exception_class_safe": None, "session_cleanup": "NOT_RUN"}
+            session = PlaywrightSocinproSession(BrowserSettings(staging_dir=staging, headed=True, executable_path=args.browser_executable, run_id=run_id))
             result["ACCOUNTS_ATTEMPTED"] += 1
             try:
                 point = time.perf_counter(); session.authenticate(account); account_result["login_seconds"] = round(time.perf_counter() - point, 3)
                 point = time.perf_counter(); session.select_competence(args.competence); account_result["navigation_seconds"] = round(time.perf_counter() - point, 3)
                 point = time.perf_counter(); files = tuple(session.download_statements(account)); account_result["download_seconds"] = round(time.perf_counter() - point, 3)
                 account_result["download_count"] = len(files)
+                account_result["download_manifest"] = list(getattr(session, "download_manifest", ()))
+                result["DOWNLOAD_MANIFEST"].extend(account_result["download_manifest"])
                 if files:
                     valid = [item for item in files if item.is_file() and item.stat().st_size > 0 and item.suffix.casefold() not in {".crdownload", ".part"} and staging in item.resolve().parents]
                     if len(valid) != len(files): raise PortalAdapterError("DOWNLOAD_INVALID")

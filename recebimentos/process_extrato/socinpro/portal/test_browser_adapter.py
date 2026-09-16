@@ -575,8 +575,23 @@ def test_select_competence_activates_search_and_confirms_payment_refresh(tmp_pat
     assert session._search_clicked is True
     assert session._search_confirmed is True
     assert session._search_diagnostics["SEARCH_PROOF_METHOD"] == "RESULT_CONTAINER_MUTATION"
-    session._download = lambda *_args: tmp_path / "synthetic.pdf"
+    document = tmp_path / "synthetic.pdf"; document.write_bytes(b"%PDF-x")
+    session._download = lambda *_args: document
     assert len(tuple(session.download_statements(RuntimeAccount(1, "user", "secret")))) == 2
+
+
+def test_download_records_every_discovered_payment_row_in_safe_manifest(tmp_path):
+    page = SearchPage(None); page.rows = ["25/08/2026 demonstrativo", "26/08/2026 demonstrativo"]; page.body = "resultado atualizado"
+    session = PlaywrightSocinproSession(BrowserSettings(tmp_path, run_id="synthetic-run"))
+    session._page = page; session._competence = "2026-08"; session._search_clicked = session._search_confirmed = True
+    session._search_diagnostics = {key: True for key in ("SEARCH_CONTROL_FOUND", "SEARCH_ACTIONABLE_CONTROL_RESOLVED", "SEARCH_ACTIVATION_ATTEMPTED", "SEARCH_ACTIVATION_CONFIRMED", "SEARCH_RESULT_REFRESH_CONFIRMED")}
+    document = tmp_path / "synthetic.pdf"; document.write_bytes(b"%PDF-x")
+    session._download = lambda *_args: document
+    assert len(tuple(session.download_statements(RuntimeAccount(4, "user", "secret")))) == 4
+    assert session.navigation_diagnostics["PAYMENT_ROWS_DISCOVERED"] == session.navigation_diagnostics["PAYMENT_ROWS_PROCESSED"] == 2
+    assert session.navigation_diagnostics["DOWNLOAD_ACTIONS_DISCOVERED"] == session.navigation_diagnostics["DOWNLOAD_ACTIONS_COMPLETED"] == 4
+    assert {item["account_index"] for item in session.download_manifest} == {4}
+    assert {item["run_id"] for item in session.download_manifest} == {"synthetic-run"}
 
 
 def test_date_control_missing_reports_specific_sanitized_reason(tmp_path):

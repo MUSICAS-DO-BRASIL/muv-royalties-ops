@@ -44,6 +44,7 @@ class BrowserSettings:
     timeout_ms: int = 45_000
     download_timeout_ms: int = 120_000
     executable_path: str | None = None
+    run_id: str = ""
 
 
 class PlaywrightSocinproSession:
@@ -64,6 +65,8 @@ class PlaywrightSocinproSession:
         self._competence_diagnostics: dict[str, object] = {}
         self._search_diagnostics: dict[str, object] = {}
         self._timing_diagnostics: dict[str, float] = {}
+        self._download_diagnostics: dict[str, int] = {}
+        self._download_manifest: list[dict[str, object]] = []
         self.browser_started = False
 
     def authenticate(self, account: RuntimeAccount) -> None:
@@ -127,13 +130,20 @@ class PlaywrightSocinproSession:
 
     @property
     def navigation_diagnostics(self) -> dict[str, object]:
-        return {**self._navigation_diagnostics, **self._competence_diagnostics, **self._search_diagnostics, **self._timing_diagnostics}
+        return {**self._navigation_diagnostics, **self._competence_diagnostics, **self._search_diagnostics, **self._download_diagnostics, **self._timing_diagnostics}
+
+    @property
+    def download_manifest(self) -> tuple[dict[str, object], ...]:
+        """Safe, per-payment provenance for the caller-owned staging run."""
+        return tuple(self._download_manifest)
 
     def download_statements(self, account: RuntimeAccount) -> Iterable[Path]:
         required_search = ("SEARCH_CONTROL_FOUND", "SEARCH_ACTIONABLE_CONTROL_RESOLVED", "SEARCH_ACTIVATION_ATTEMPTED", "SEARCH_ACTIVATION_CONFIRMED", "SEARCH_RESULT_REFRESH_CONFIRMED")
         if not self._competence or not self._search_clicked or not self._search_confirmed or not all(self._search_diagnostics.get(key) is True for key in required_search):
             raise PortalAdapterError("SEARCH_NOT_EXECUTED", self.navigation_diagnostics)
         page = self._require_page()
+        self._download_diagnostics = {"PAYMENT_ROWS_DISCOVERED": 0, "PAYMENT_ROWS_PROCESSED": 0, "DOWNLOAD_ACTIONS_DISCOVERED": 0, "DOWNLOAD_ACTIONS_COMPLETED": 0}
+        self._download_manifest = []
         rows = page.locator("tbody tr:visible")
         try:
             count = rows.count()
@@ -144,11 +154,21 @@ class PlaywrightSocinproSession:
             return ()
         files: list[Path] = []
         for row in range(count):
-            text = rows.nth(row).inner_text().casefold()
-            if not re.search(r"\d{2}/\d{2}/\d{4}", text):
+            row_text = rows.nth(row).inner_text()
+            payment_date = re.search(r"\d{2}/\d{2}/\d{4}", row_text)
+            if payment_date is None:
                 continue
+            self._download_diagnostics["PAYMENT_ROWS_DISCOVERED"] += 1
+            row_key = hashlib.sha256(re.sub(r"\s+", " ", row_text).strip().casefold().encode("utf-8")).hexdigest()
             for label, selectors in (("analitico", [f"#frm\\:tabela\\:{row}\\:j_idt66", f"tbody tr:visible >> nth={row} >> button[title*='anal' i]"]), ("sintetico", [f"#frm\\:tabela\\:{row}\\:j_idt67", f"tbody tr:visible >> nth={row} >> button[title*='sint' i]"])):
-                files.append(self._download(page, account, label, selectors))
+                self._download_diagnostics["DOWNLOAD_ACTIONS_DISCOVERED"] += 1
+                downloaded = self._download(page, account, label, selectors)
+                files.append(downloaded)
+                self._download_diagnostics["DOWNLOAD_ACTIONS_COMPLETED"] += 1
+                self._download_manifest.append({"run_id": self.settings.run_id, "account_index": account.index, "payment_row_ordinal": row + 1, "payment_row_key": row_key, "payment_date": payment_date.group(0), "document_role": label, "download_action": label, "file_sha256": hashlib.sha256(downloaded.read_bytes()).hexdigest()})
+            self._download_diagnostics["PAYMENT_ROWS_PROCESSED"] += 1
+        if self._download_diagnostics["PAYMENT_ROWS_DISCOVERED"] != self._download_diagnostics["PAYMENT_ROWS_PROCESSED"] or self._download_diagnostics["DOWNLOAD_ACTIONS_DISCOVERED"] != self._download_diagnostics["DOWNLOAD_ACTIONS_COMPLETED"]:
+            raise PortalAdapterError("DOCUMENT_PROCESSING_INCOMPLETE", self.navigation_diagnostics)
         if not files:
             raise PortalAdapterError("UNEXPECTED_PAGE")
         return tuple(files)
