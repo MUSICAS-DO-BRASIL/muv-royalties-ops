@@ -222,3 +222,19 @@ def test_successful_navigation_continues_to_competence_selection(tmp_path):
 
     assert (start_field.value, end_field.value) == ("01/08/2026", "31/08/2026")
     assert session._search_confirmed is True
+
+
+def test_competence_failure_preserves_initialized_navigation_diagnostics(tmp_path):
+    page = AuthenticatedNavigationPage(f"https://associado.socinpro.org.br{DEMONSTRATIVO_PATH}")
+    session = PlaywrightSocinproSession(BrowserSettings(tmp_path))
+    session._page = page
+    session._navigate_to_demonstrativo = lambda _page: session._navigation_diagnostics.update(
+        {"PORTAL_STAGE": "DEMONSTRATIVO_PAGE", "DEMONSTRATIVO_PAGE_CONFIRMED": True}
+    )
+    session._first_visible = lambda *_args: (_ for _ in ()).throw(TimeoutError("synthetic browser timeout"))
+
+    with pytest.raises(PortalAdapterError, match="COMPETENCE_SELECTION_FAILED") as caught:
+        session.select_competence("2026-08")
+
+    assert caught.value.diagnostics["PORTAL_STAGE"] == "COMPETENCE_SELECTION"
+    assert caught.value.diagnostics["DEMONSTRATIVO_PAGE_CONFIRMED"] is True

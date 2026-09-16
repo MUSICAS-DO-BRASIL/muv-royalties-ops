@@ -82,3 +82,27 @@ def test_smoke_runner_returns_only_sanitized_navigation_diagnostics(monkeypatch,
     account_result = result["ACCOUNT_RESULTS"][0]
     assert account_result["status"] == "PORTAL_LAYOUT_REVIEW"
     assert account_result["navigation_diagnostics"] == {"PORTAL_STAGE": "POST_LOGIN_NAVIGATION", "LAYOUT_FAILURE_REASON": "TARGET_PAGE_NOT_CONFIRMED"}
+
+
+def test_smoke_runner_sanitizes_unexpected_post_login_exception(monkeypatch, tmp_path):
+    account = SimpleNamespace(index=1, masked_identifier="id#synthetic")
+    monkeypatch.setattr(smoke_runner, "preflight_runtime_credentials", lambda _entity: SimpleNamespace(accounts=(account,)))
+
+    class Session:
+        navigation_diagnostics = {"PORTAL_STAGE": "POST_LOGIN", "CURRENT_URL_CLASS": "UNKNOWN_AUTHENTICATED_PAGE", "unsafe": "credential-value"}
+        def __init__(self, _settings): pass
+        def authenticate(self, _account): pass
+        def select_competence(self, _competence): raise TimeoutError("cookie token credential-value")
+        def close(self): pass
+
+    monkeypatch.setattr(smoke_runner, "PlaywrightSocinproSession", Session)
+    args = argparse.Namespace(entity="HM", competence="2026-08", account_limit=1, start_at=1, max_accounts=None, stop_after_first_download=False, staging_root=tmp_path, browser_executable=None)
+    result = smoke_runner.run_smoke(args)
+
+    account_result = result["ACCOUNT_RESULTS"][0]
+    assert account_result["status"] == "FAILED"
+    assert account_result["failure_stage"] == "POST_LOGIN_NAVIGATION"
+    assert account_result["failure_reason"] == "UNEXPECTED_EXCEPTION"
+    assert account_result["exception_class_safe"] == "TimeoutError"
+    assert account_result["navigation_diagnostics"] == {"PORTAL_STAGE": "POST_LOGIN", "CURRENT_URL_CLASS": "UNKNOWN_AUTHENTICATED_PAGE"}
+    assert "credential-value" not in repr(account_result)

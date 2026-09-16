@@ -53,6 +53,7 @@ class PlaywrightSocinproSession:
         self._page = None
         self._competence: str | None = None
         self._search_confirmed = False
+        self._navigation_diagnostics: dict[str, object] = {}
         self.browser_started = False
 
     def authenticate(self, account: RuntimeAccount) -> None:
@@ -73,6 +74,7 @@ class PlaywrightSocinproSession:
         if not re.fullmatch(r"\d{4}-\d{2}", competence):
             raise PortalAdapterError("COMPETENCE_INVALID")
         page = self._require_page()
+        self._navigation_diagnostics = self._new_navigation_diagnostics(page)
         start, end = competence_date_range(competence)
         try:
             self._navigate_to_demonstrativo(page)
@@ -93,7 +95,14 @@ class PlaywrightSocinproSession:
             self._competence = competence
             self._search_confirmed = True
         except Exception as exc:
-            raise PortalAdapterError("COMPETENCE_SELECTION_FAILED") from exc
+            raise PortalAdapterError(
+                "COMPETENCE_SELECTION_FAILED",
+                self._failure_diagnostics("COMPETENCE_SELECTION", "COMPETENCE_SELECTION_FAILED"),
+            ) from None
+
+    @property
+    def navigation_diagnostics(self) -> dict[str, object]:
+        return dict(self._navigation_diagnostics)
 
     def download_statements(self, account: RuntimeAccount) -> Iterable[Path]:
         if not self._competence or not self._search_confirmed:
@@ -200,7 +209,9 @@ class PlaywrightSocinproSession:
         makes that intermediate menu unstable.  The protected route is stable,
         requires the already-authenticated context, and avoids generated IDs.
         """
-        diagnostics = self._new_navigation_diagnostics(page)
+        diagnostics = self._navigation_diagnostics or self._new_navigation_diagnostics(page)
+        diagnostics["PORTAL_STAGE"] = "POST_LOGIN_NAVIGATION"
+        self._navigation_diagnostics = diagnostics
         try:
             page.goto(DEMONSTRATIVO_URL, wait_until="domcontentloaded", timeout=self.settings.timeout_ms)
             self._verify_demonstrativo_page(page, diagnostics)
@@ -209,6 +220,7 @@ class PlaywrightSocinproSession:
                 raise
             diagnostics["CURRENT_URL_CLASS"] = self._url_class(page)
             diagnostics["LAYOUT_FAILURE_REASON"] = self._navigation_failure_reason(exc)
+            self._navigation_diagnostics = diagnostics
             raise PortalAdapterError("POST_LOGIN_NAVIGATION_FAILED", diagnostics) from None
 
     def _verify_demonstrativo_page(self, page, diagnostics: dict[str, object]) -> None:
@@ -223,6 +235,7 @@ class PlaywrightSocinproSession:
             raise PortalAdapterError("UNEXPECTED_PAGE")
         diagnostics["DEMONSTRATIVO_PAGE_CONFIRMED"] = True
         diagnostics["CURRENT_URL_CLASS"] = "DEMONSTRATIVO_PAGE"
+        self._navigation_diagnostics = diagnostics
 
     @staticmethod
     def _new_navigation_diagnostics(page) -> dict[str, object]:
@@ -255,6 +268,13 @@ class PlaywrightSocinproSession:
         if isinstance(exc, PortalAdapterError) and exc.category == "UNEXPECTED_PAGE":
             return "TARGET_PAGE_NOT_CONFIRMED"
         return "TARGET_ROUTE_UNAVAILABLE"
+
+    def _failure_diagnostics(self, stage: str, reason: str) -> dict[str, object]:
+        diagnostics = dict(self._navigation_diagnostics)
+        diagnostics["PORTAL_STAGE"] = stage
+        diagnostics["LAYOUT_FAILURE_REASON"] = reason
+        self._navigation_diagnostics = diagnostics
+        return diagnostics
 
     def _set_date(self, field, value: str) -> None:
         field.fill(value)

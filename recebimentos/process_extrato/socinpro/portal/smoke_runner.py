@@ -18,6 +18,48 @@ from ..portal_runtime import HumanInterventionRequired, SocinproPortalRuntimeErr
 from .browser_adapter import BrowserSettings, PlaywrightSocinproSession, PortalAdapterError
 
 
+_DIAGNOSTIC_KEYS = {
+    "PORTAL_STAGE", "NAV_FINANCEIRO_FOUND", "NAV_FINANCEIRO_ACTIVATED",
+    "NAV_SOCINPRO_FOUND", "NAV_SOCINPRO_ACTIVATED", "NAV_DEMONSTRATIVO_FOUND",
+    "NAV_DEMONSTRATIVO_ACTIVATED", "DEMONSTRATIVO_PAGE_CONFIRMED",
+    "CURRENT_URL_CLASS", "LAYOUT_FAILURE_REASON",
+}
+
+
+def _safe_navigation_diagnostics(session, fallback_stage: str | None = None, error_diagnostics: dict[str, object] | None = None) -> dict[str, object]:
+    """Return only the fixed, non-content-bearing navigation diagnostic schema."""
+    source = error_diagnostics if isinstance(error_diagnostics, dict) else getattr(session, "navigation_diagnostics", {})
+    if not isinstance(source, dict):
+        source = {}
+    diagnostics = {key: value for key, value in source.items() if key in _DIAGNOSTIC_KEYS and isinstance(value, (str, bool, type(None)))}
+    if diagnostics or fallback_stage is None:
+        return diagnostics
+    return {
+        "PORTAL_STAGE": fallback_stage,
+        "NAV_FINANCEIRO_FOUND": False,
+        "NAV_FINANCEIRO_ACTIVATED": False,
+        "NAV_SOCINPRO_FOUND": False,
+        "NAV_SOCINPRO_ACTIVATED": False,
+        "NAV_DEMONSTRATIVO_FOUND": False,
+        "NAV_DEMONSTRATIVO_ACTIVATED": False,
+        "DEMONSTRATIVO_PAGE_CONFIRMED": False,
+        "CURRENT_URL_CLASS": "UNKNOWN_AUTHENTICATED_PAGE",
+        "LAYOUT_FAILURE_REASON": None,
+    }
+
+
+def _known_failure_status(category: str) -> tuple[str, str]:
+    if category in {"UNEXPECTED_PAGE", "POST_LOGIN_NAVIGATION_FAILED"}:
+        return "PORTAL_LAYOUT_REVIEW", "POST_LOGIN_NAVIGATION"
+    if category == "COMPETENCE_SELECTION_FAILED":
+        return category, "COMPETENCE_SELECTION"
+    if category == "DOCUMENT_DISCOVERY_FAILED":
+        return category, "DOCUMENT_DISCOVERY"
+    if category.startswith("DOWNLOAD_"):
+        return category, "DOWNLOAD"
+    return "FAILED", "UNEXPECTED"
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Operator-executed SOCINPRO portal smoke.")
     parser.add_argument("--entity", choices=("HM",), default="HM")
@@ -76,7 +118,7 @@ def run_smoke(args: argparse.Namespace) -> dict[str, object]:
         result["PLANNED_ACCOUNT_START"], result["PLANNED_ACCOUNT_END"], result["PLANNED_ACCOUNT_COUNT"] = planned[0].index, planned[-1].index, len(planned)
         all_files: set[str] = set()
         for account in planned:
-            account_result = {"account_index": account.index, "masked_identifier": account.masked_identifier, "status": "FAILED", "login_seconds": 0.0, "navigation_seconds": 0.0, "download_seconds": 0.0, "download_count": 0, "captcha_detected": False, "mfa_detected": False, "navigation_diagnostics": {}, "session_cleanup": "NOT_RUN"}
+            account_result = {"account_index": account.index, "masked_identifier": account.masked_identifier, "status": "FAILED", "login_seconds": 0.0, "navigation_seconds": 0.0, "download_seconds": 0.0, "download_count": 0, "captcha_detected": False, "mfa_detected": False, "navigation_diagnostics": {}, "failure_stage": None, "failure_reason": None, "exception_class_safe": None, "session_cleanup": "NOT_RUN"}
             session = PlaywrightSocinproSession(BrowserSettings(staging_dir=staging, headed=True, executable_path=args.browser_executable))
             result["ACCOUNTS_ATTEMPTED"] += 1
             try:
@@ -94,8 +136,20 @@ def run_smoke(args: argparse.Namespace) -> dict[str, object]:
             except HumanInterventionRequired as exc:
                 account_result["status"] = "WAITING_HUMAN"; account_result["captcha_detected"] = exc.category == "CAPTCHA_REQUIRED"; account_result["mfa_detected"] = exc.category == "MFA_REQUIRED"; result["ACCOUNTS_WAITING_HUMAN"] += 1
             except PortalAdapterError as exc:
-                account_result["navigation_diagnostics"] = exc.diagnostics
-                account_result["status"] = "PORTAL_LAYOUT_REVIEW" if exc.category in {"UNEXPECTED_PAGE", "POST_LOGIN_NAVIGATION_FAILED", "DOCUMENT_DISCOVERY_FAILED"} else "FAILED"; result["ACCOUNTS_FAILED"] += 1
+                status, stage = _known_failure_status(exc.category)
+                account_result["status"] = status
+                account_result["failure_stage"] = stage
+                account_result["failure_reason"] = exc.category
+                account_result["navigation_diagnostics"] = _safe_navigation_diagnostics(session, stage if stage == "POST_LOGIN_NAVIGATION" else None, exc.diagnostics)
+                result["ACCOUNTS_FAILED"] += 1
+            except Exception as exc:
+                stage = "POST_LOGIN_NAVIGATION"
+                account_result["status"] = "FAILED"
+                account_result["failure_stage"] = stage
+                account_result["failure_reason"] = "UNEXPECTED_EXCEPTION"
+                account_result["exception_class_safe"] = type(exc).__name__
+                account_result["navigation_diagnostics"] = _safe_navigation_diagnostics(session, stage)
+                result["ACCOUNTS_FAILED"] += 1
             finally:
                 try: session.close(); account_result["session_cleanup"] = "PASS"
                 except Exception: account_result["session_cleanup"] = "FAIL"
