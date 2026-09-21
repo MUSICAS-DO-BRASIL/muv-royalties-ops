@@ -39,6 +39,30 @@ Nunca inclua documentos de produção, credenciais ou dados financeiros reais em
 
 Os testes automatizados estão próximos aos respectivos fluxos. Antes de alterações, execute a compilação Python e os testes relevantes ao módulo modificado.
 
+### Validação Docker e GitHub Actions
+
+Com Python 3 e Docker Engine/Desktop iniciado, use Docker Compose 2.24 ou mais
+recente e execute na raiz do clone:
+
+```sh
+python3 scripts/validate_docker.py
+```
+
+O comando constrói a imagem de testes e a imagem da aplicação, executa a suíte
+sintética no container sem rede e inicia uma stack temporária com PostgreSQL.
+Verifica saúde HTTP/SQL, configuração sintética BTG e persistência dos arquivos
+e do banco após recriar os containers. Não lê o `.env` local, não publica portas,
+não acessa portais corporativos e não exige documentos ou credenciais reais.
+Ao terminar, remove somente os containers, volumes e imagens temporários da
+própria execução; as imagens-base e o cache de build podem permanecer no Docker.
+Não substitui teste de backup/restauração, Excel COM ou homologação operacional.
+
+O workflow `.github/workflows/validation.yml` executa testes Python e essa mesma
+validação Docker em Linux nos pull requests e pushes em `main`/`ci/**`.
+Também permite execução manual quando estiver na branch padrão. Usa permissões
+de leitura, sem segredos corporativos, publicação de imagens ou deploy automático.
+O resultado de cada execução fica na aba Actions do GitHub.
+
 ## Segurança
 
 Projeto interno e proprietário. O repositório não contém dados financeiros ou documentos operacionais de produção.

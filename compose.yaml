@@ -12,6 +12,7 @@ services:
       DB_NAME: ${DB_NAME:?Set DB_NAME in external config}
       DB_USER: ${DB_USER:?Set DB_USER in external config}
       DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in external config}
+      MUV_BANK_ACCOUNT_ID: ${MUV_BANK_ACCOUNT_ID:-}
       MUV_OPERATIONAL_ROOT: /data/months
       MUV_TEMPLATE_ROOT: /data/templates
       MUV_BTG_SOURCE_MAP: /data/config/btg.json
