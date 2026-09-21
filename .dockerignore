@@ -5,6 +5,7 @@
 !requirements.txt
 !requirements-container.txt
 !requirements-dev.txt
+!constraints-linux-py314.txt
 !pyproject.toml
 !recebimentos/
 !recebimentos/process_extrato/
