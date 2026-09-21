@@ -15,7 +15,7 @@ Organizar processos de recebimentos e preparação mensal, preservando a operaç
 
 ## Arquitetura
 
-\`\`\`text
+```text
 Fontes e arquivos externos
         ↓
 Leitura e staging
@@ -25,7 +25,7 @@ Validação e normalização
 Regras de negócio e reconciliação
         ↓
 Planilhas operacionais e futura integração com PostgreSQL
-\`\`\`
+```
 
 Planilhas continuam sendo uma interface operacional e de consumo. Dados de origem, transformações e resultados devem permanecer rastreáveis, e regras críticas não devem depender somente de fórmulas.
 
@@ -65,8 +65,8 @@ ou externo de produção e não substitui Excel COM ou homologação operacional
 O workflow `.github/workflows/validation.yml` executa testes Python e essa mesma
 validação Docker em Linux nos pull requests e pushes em `main`/`ci/**`.
 Também permite execução manual quando estiver na branch padrão. Os testes usam
-permissões de leitura e nenhum segredo corporativo. Após integração na `main`,
-um job separado publica a mesma imagem validada no GitHub Container Registry,
+permissões de leitura e nenhum segredo corporativo. Em pushes ou execução manual
+na `main`, um job separado publica a mesma imagem validada no GitHub Container Registry,
 somente se os dois jobs de testes passarem. Pull requests não publicam imagens.
 Não há deploy automático na Hostinger. Resultados e referência da imagem ficam
 na aba Actions. Veja [recuperação e publicação](docs/RECOVERY_AND_IMAGES.md).
@@ -79,26 +79,63 @@ O controle de versão deve conter apenas código, documentação sanitizada, con
 
 ## Estado atual
 
-- Extração bancária HM V2: aprovada.
-- Template canônico HM V1: aprovado.
-- Suporte à criação mensal HM: disponível.
-- Preparação genérica de mês: implementada.
-- Testes relevantes: aprovados no marco de referência.
-- Arquivos oficiais: preservados fora do controle de versão.
+Marco verificado em **21/09/2026**, no commit `35faa7b`:
+
+- [PR #1](https://github.com/MUSICAS-DO-BRASIL/muv-royalties-ops/pull/1)
+  integrado à `main`: validação Docker, recuperação sintética e publicação de imagens.
+- **227 testes aprovados e 1 skip exclusivo de Windows** em cada suíte Python e
+  Docker do [workflow de referência](https://github.com/MUSICAS-DO-BRASIL/muv-royalties-ops/actions/runs/35642447257).
+- Build, saúde Streamlit/PostgreSQL, persistência após recriar containers e
+  recuperação em volumes novos aprovados; arquivos restaurados conferidos por hash.
+- Primeira imagem `linux/amd64` publicada no GitHub Container Registry.
+- Extração bancária HM V2 e template HM V1 mantêm os marcos anteriores de aprovação;
+  preparação oficial de mês e gravações via Excel COM continuam exigindo Windows.
+- Parser PDF Safra e adaptador de navegador SOCINPRO presentes no código;
+  existência do código e testes sintéticos não comprovam homologação operacional.
+- PostgreSQL disponível na infraestrutura, com verificação `SELECT 1`;
+  schema e persistência financeira ainda não implementados.
+- Deploy na Hostinger e backup periódico externo de produção ainda pendentes.
+  Documentos oficiais, mappings e credenciais permanecem fora do Git e da imagem.
+
+### Imagem publicada e uso futuro na Hostinger
+
+A primeira imagem validada pode ser referenciada no arquivo de configuração
+externo utilizado por `deploy/compose.staging.yaml`:
+
+```dotenv
+MUV_APP_IMAGE=ghcr.io/musicas-do-brasil/muv-royalties-ops@sha256:8d2bb7457cdabd3711729ed06ef9e2ecb3df0c82187b5d45595d78b36607f805
+```
+
+Esse digest identifica o marco acima, não uma tag móvel de versão mais recente.
+Publicações posteriores aparecem no resumo de cada execução da
+[aba Actions](https://github.com/MUSICAS-DO-BRASIL/muv-royalties-ops/actions/workflows/validation.yml).
+Use o digest da versão escolhida e confirme a arquitetura da VPS: a publicação
+atual é `linux/amd64`; o Docker local no Mac também foi validado em `linux/arm64`.
+O servidor precisa de acesso de leitura ao package para baixar uma imagem privada.
+
+Publicar a imagem não implanta a aplicação. Antes de operar na Hostinger, configure
+acesso ao registry, variáveis externas, volumes, templates/mappings, HTTPS,
+autenticação e backups externos. Consulte o [plano de staging](docs/HOSTINGER_STAGING_V1.md)
+e os [limites da recuperação e publicação](docs/RECOVERY_AND_IMAGES.md).
 
 ## Roadmap
 
-1. Consolidar automações e validações por fonte.
-2. Ampliar staging, proveniência, idempotência e reconciliação.
-3. Executar Excel e PostgreSQL em paralelo quando houver base validada.
-4. Evoluir para uma plataforma de dados centralizada de forma gradual e auditável.
+1. Configurar proteção da `main` com os checks obrigatórios e fixar dependências
+   transitivas para construções Linux reproduzíveis.
+2. Definir backup externo, agendamento, retenção e alertas de falha para produção.
+3. Implantar staging na Hostinger com acesso protegido e dados fictícios.
+4. Preparar e validar Playwright/Chromium em ambiente próprio para SOCINPRO,
+   mantendo as etapas de Excel COM no Windows enquanto forem necessárias.
+5. Consolidar validações por fonte, proveniência, idempotência e reconciliação;
+   implementar persistência financeira no PostgreSQL quando houver base validada.
 
 ## Ambiente de desenvolvimento e home office
 
 ### Requisitos e instalação
 
 Git, acesso autorizado ao repositório e Python 3.14 (validado com 3.14.7 em
-macOS arm64). Outros sistemas/versões precisam da própria validação.
+macOS arm64). A suíte também foi validada em Linux arm64 no Docker local e Linux
+amd64 no GitHub Actions. Windows/Excel COM e outras versões precisam da própria validação.
 Na raiz de um clone novo:
 
 ```sh
@@ -178,16 +215,22 @@ Os serviços de preparação também aceitam raízes por argumento.
   explicitamente e não implementa o gravador de staging.
 
 Templates homologados e mappings aprovados **não vêm do GitHub**. Não invente
-mappings de produção. O parser PDF Safra `process_safra_mp_toyalties.py` também
-está ausente: o classificador Safra é importável/testável, mas a extração PDF
-Safra completa permanece pendente. A extração BTG completa requer mapping externo.
+mappings de produção. O parser PDF Safra está versionado em
+`recebimentos/process_extrato/mdb/process_safra_mp_toyalties.py` e é carregado pelo
+core bancário. Os testes cobrem cenários sintéticos; o fluxo operacional depende
+de arquivos e mappings aprovados. A extração BTG completa também requer mapping externo.
 
 A preparação oficial exige validação Excel COM em Windows; no Mac retorna
 `WINDOWS_EXCEL_REQUIRED`, sem criar substituto. Diagnóstico de atributos Windows
 é isolado. Sincronização local e publicação OneDrive/SharePoint dependem do
 ambiente corporativo; o transporte Graph precisa de implementação/autorização.
-Não há integração Credential Manager nem automação de navegador versionada neste
-clone. Credenciais, sessões corporativas e documentos operacionais ficam fora do Git.
+Não há integração Credential Manager. A automação de navegador SOCINPRO está
+versionada em `recebimentos/process_extrato/socinpro/portal/`, com adaptador
+Playwright e executor assistido `smoke_runner.py`. As dependências são opcionais
+e estão no `requirements.txt` desse diretório; Playwright e Chromium não fazem
+parte da imagem Docker atual. O executor usa navegador com interface gráfica;
+CAPTCHA/MFA exigem intervenção humana. Credenciais, sessões corporativas e
+documentos operacionais ficam fora do Git. A suíte sintética não acessa o portal real.
 
 ### Conta de investimento BTG: configuração obrigatória
 
@@ -202,8 +245,10 @@ export MUV_BANK_ACCOUNT_ID="TEST_BANK_ACCOUNT_001"
 Em operação autorizada, forneça a conta esperada por configuração externa ao
 Git. Preserve zeros à esquerda; não use espaços. São aceitos caracteres ASCII
 alfanuméricos, `_` e `-`. Não registre o valor em logs, comandos compartilhados,
-README, fixtures ou arquivos versionados. Arquivos `.env` não são carregados
-automaticamente. Configuração ausente/vazia/inválida bloqueia o parsing com
+README, fixtures ou arquivos versionados. O Python não carrega arquivos `.env`
+automaticamente. No Docker Compose, os manifests repassam `MUV_BANK_ACCOUNT_ID`
+ao container a partir da configuração externa; o `.env.example` local contém
+somente um identificador sintético. Configuração ausente/vazia/inválida bloqueia o parsing com
 mensagem genérica; importar o core e abrir a UI vazia não exige conta configurada.
 A identidade validada continua presente nos resultados técnicos locais, como
 antes; esses resultados são operacionais e não devem entrar no Git.
@@ -211,9 +256,9 @@ antes; esses resultados são operacionais e não devem entrar no Git.
 A comparação exige a conta inteira, além da empresa e banco esperados.
 Os testes usam somente `TEST_BANK_ACCOUNT_001` e variantes sintéticas.
 
-`SAFRA_PARSER_STATUS = MISSING_FROM_CLEAN_REPOSITORY` e
-`SAFRA_RECOVERY_REQUIRED_ON_WINDOWS = true`: recuperar e auditar no ambiente
-Windows corporativo antes de habilitar esse fluxo. Nenhum parser foi recriado.
+Os relatórios históricos V1/V1.1 registram o parser Safra como ausente naquele
+marco. Esse diagnóstico não descreve o checkout atual, que já contém o parser.
+As exigências de validação operacional e de Excel COM continuam aplicáveis.
 
 A sanitização V1.1 cobre o checkout atual. Commits anteriores ainda contêm o
 identificador removido; o histórico não foi reescrito.
