@@ -209,6 +209,21 @@ class PlaywrightSocinproSession:
             raise PortalAdapterError("DOCUMENT_PROCESSING_INCOMPLETE", self.navigation_diagnostics)
         return self.download_manifest
 
+    def download_payment_row_pair(self, account: RuntimeAccount, payment_row_ordinal: int) -> tuple[Path, Path]:
+        """Download exactly one previously inventoried payment row's evidence pair."""
+        self._require_confirmed_search()
+        if payment_row_ordinal < 1:
+            raise PortalAdapterError("PAYMENT_ROW_ORDINAL_INVALID")
+        page = self._require_page(); row = page.locator("tbody tr:visible").nth(payment_row_ordinal - 1)
+        row_text = row.inner_text(); payment_date = re.search(r"\d{2}/\d{2}/\d{4}", row_text)
+        if payment_date is None:
+            raise PortalAdapterError("PAYMENT_ROW_NOT_FOUND")
+        files = []
+        for label, selectors in (("analitico", [f"#frm\\:tabela\\:{payment_row_ordinal - 1}\\:j_idt66", f"tbody tr:visible >> nth={payment_row_ordinal - 1} >> button[title*='anal' i]"]), ("sintetico", [f"#frm\\:tabela\\:{payment_row_ordinal - 1}\\:j_idt67", f"tbody tr:visible >> nth={payment_row_ordinal - 1} >> button[title*='sint' i]"])):
+            downloaded = self._download(page, account, label, selectors); files.append(downloaded)
+            self._download_manifest.append({"run_id": self.settings.run_id, "account_index": account.index, "payment_row_ordinal": payment_row_ordinal, "payment_date": payment_date.group(0), "portal_displayed_amount": self._displayed_amount(row_text), "document_role": label, "download_action": label, "file_sha256": hashlib.sha256(downloaded.read_bytes()).hexdigest()})
+        return tuple(files)
+
     def close(self) -> None:
         for item in (self._context, self._browser, self._playwright):
             try:

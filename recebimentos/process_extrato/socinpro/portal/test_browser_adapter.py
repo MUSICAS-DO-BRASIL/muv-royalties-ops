@@ -631,6 +631,16 @@ def test_displayed_amount_is_kept_as_observed_portal_text():
     assert PlaywrightSocinproSession._displayed_amount("25/08/2026") is None
 
 
+def test_download_single_inventoried_row_does_not_touch_other_rows(tmp_path):
+    page = SearchPage(None); page.rows = ["25/08/2026 R$ -100,00", "25/08/2026 R$ -200,00"]; page.body = "resultado atualizado"
+    session = PlaywrightSocinproSession(BrowserSettings(tmp_path)); session._page = page; session._competence = "2026-08"; session._search_clicked = session._search_confirmed = True
+    session._search_diagnostics = {key: True for key in ("SEARCH_CONTROL_FOUND", "SEARCH_ACTIONABLE_CONTROL_RESOLVED", "SEARCH_ACTIVATION_ATTEMPTED", "SEARCH_ACTIVATION_CONFIRMED", "SEARCH_RESULT_REFRESH_CONFIRMED")}
+    document = tmp_path / "synthetic.pdf"; document.write_bytes(b"%PDF-x"); calls=[]
+    session._download = lambda _page, _account, label, selectors: (calls.append((label, selectors[-1])) or document)
+    assert len(session.download_payment_row_pair(RuntimeAccount(1, "user", "secret"), 2)) == 2
+    assert all("nth=1" in selector for _, selector in calls)
+
+
 def test_date_control_missing_reports_specific_sanitized_reason(tmp_path):
     session = PlaywrightSocinproSession(BrowserSettings(tmp_path))
     session._competence_diagnostics = session._new_competence_diagnostics("01/08/2026", "31/08/2026")
