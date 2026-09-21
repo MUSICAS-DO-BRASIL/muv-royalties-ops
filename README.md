@@ -39,6 +39,38 @@ Nunca inclua documentos de produção, credenciais ou dados financeiros reais em
 
 Os testes automatizados estão próximos aos respectivos fluxos. Antes de alterações, execute a compilação Python e os testes relevantes ao módulo modificado.
 
+### Validação Docker e GitHub Actions
+
+Com Python 3 e Docker Engine/Desktop iniciado, use Docker Compose 2.24 ou mais
+recente e execute na raiz do clone:
+
+```sh
+python3 scripts/validate_docker.py
+```
+
+O comando constrói a imagem de testes e a imagem da aplicação, executa a suíte
+sintética no container sem rede e inicia uma stack temporária com PostgreSQL.
+Verifica saúde HTTP/SQL, configuração sintética BTG e persistência dos arquivos
+e do banco após recriar os containers. Não lê o `.env` local, não publica portas,
+não acessa portais corporativos e não exige documentos ou credenciais reais.
+Depois pausa a aplicação sintética, usa `backup_postgres.py` para gerar um dump,
+arquiva `/data` e restaura ambos em uma segunda stack com volumes novos. Compara
+o registro SQL, hashes de todos os arquivos e a saúde da aplicação restaurada;
+também verifica que uma restauração recusa um destino já preenchido.
+Ao terminar, remove somente os containers, volumes e imagens temporários da
+própria execução; as imagens-base e o cache de build podem permanecer no Docker.
+Os backups sintéticos também são apagados ao final. Não configura backup periódico
+ou externo de produção e não substitui Excel COM ou homologação operacional.
+
+O workflow `.github/workflows/validation.yml` executa testes Python e essa mesma
+validação Docker em Linux nos pull requests e pushes em `main`/`ci/**`.
+Também permite execução manual quando estiver na branch padrão. Os testes usam
+permissões de leitura e nenhum segredo corporativo. Após integração na `main`,
+um job separado publica a mesma imagem validada no GitHub Container Registry,
+somente se os dois jobs de testes passarem. Pull requests não publicam imagens.
+Não há deploy automático na Hostinger. Resultados e referência da imagem ficam
+na aba Actions. Veja [recuperação e publicação](docs/RECOVERY_AND_IMAGES.md).
+
 ## Segurança
 
 Projeto interno e proprietário. O repositório não contém dados financeiros ou documentos operacionais de produção.
