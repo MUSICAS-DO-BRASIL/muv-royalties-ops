@@ -12,6 +12,7 @@ from bank_extraction_core import BankExtractionService
 from bank_extraction_month_context import resolve_month_context
 from bank_extraction_ui import context_strip, empty_state, header, month_panel, page_shell, processed_view, sidebar, stepper, upload_panel
 from month_preparation import MonthPreparationService, default_competence
+from upload_staging import stage_uploaded_pdf
 
 
 st.set_page_config(page_title="Extração Bancária | MUV", page_icon="M", layout="wide", initial_sidebar_state="expanded")
@@ -48,8 +49,7 @@ def run() -> None:
                 with st.spinner("Validando extrato bancário..."):
                     validate_processing_context(context)
                     with TemporaryDirectory(prefix="muv-bank-") as temporary:
-                        source = Path(temporary) / uploaded.name
-                        source.write_bytes(uploaded.getvalue())
+                        source = stage_uploaded_pdf(Path(temporary), uploaded.name, uploaded.getvalue())
                         st.session_state.result = service.process(entity=context.entity, period=context.period, source_path=source)
                 st.rerun()
             except Exception:

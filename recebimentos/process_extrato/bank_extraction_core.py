@@ -17,6 +17,7 @@ import json
 import os
 import re
 import sys
+from upload_staging import stage_uploaded_pdf
 
 if TYPE_CHECKING:
     from mdb_safra_worksheet_writer import MdbSafraWorksheetWriter
@@ -250,8 +251,7 @@ class BankExtractionService:
         if entity == "HM":
             bootstrap = _load_module("bank_app_hm_bootstrap", BTG_DIR / "hm_month_bootstrap.py")
             with TemporaryDirectory(prefix="muv-hm-bootstrap-") as temp:
-                statement = Path(temp) / source_name
-                statement.write_bytes(source_bytes)
+                statement = stage_uploaded_pdf(Path(temp), source_name, source_bytes)
                 context = bootstrap.prepare_hm_month(period=period, btg_statement=statement, monthly_root=self._monthly_root)
             return context.validation_status, "; ".join(context.review_reasons)
         if entity != "MDB":
@@ -269,8 +269,7 @@ class BankExtractionService:
         )
         try:
             with TemporaryDirectory(prefix="muv-mdb-bootstrap-") as temp:
-                statement = Path(temp) / source_name
-                statement.write_bytes(source_bytes)
+                statement = stage_uploaded_pdf(Path(temp), source_name, source_bytes)
                 result = self.process(entity="MDB", period=period, source_path=statement)
                 outcome = facade.prepare(result, period)
         except ValueError as exc:
