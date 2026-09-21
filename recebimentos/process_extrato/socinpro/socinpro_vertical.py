@@ -12,7 +12,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 from hashlib import sha256
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tempfile import TemporaryDirectory, mkdtemp
 from typing import Callable, Iterable, Literal, Mapping
 import json
 import os
@@ -158,7 +158,7 @@ def publish_operational_result(result: SocinproResult, operational_root: str | P
         raise SocinproContractError("PUBLICACAO_SOCINPRO_BLOQUEADA:RESULTADO_EM_REVISAO")
     source_folder = source_folder_for(operational_root, result.entity, result.competence)
     technical = Path(technical_root).resolve()
-    if _overlaps(source_folder.resolve(), technical):
+    if _overlaps(Path(operational_root).resolve(), technical):
         raise SocinproContractError("TECHNICAL_ROOT_DEVE_SER_EXTERNO_A_PASTA_OPERACIONAL")
     filename = f"Demonstrativo_SOCINPRO_{result.competence.replace('-', '')}.xlsx"
     destination = source_folder / filename
@@ -172,7 +172,13 @@ def publish_operational_result(result: SocinproResult, operational_root: str | P
             publication = create_workbook_only(staged, destination)
             if publication.status != "PASS":
                 raise SocinproContractError("PUBLICACAO_DEMONSTRATIVO_BLOQUEADA:" + ",".join(publication.errors))
-    _write_audit(technical, result, destination)
+    try:
+        _write_audit(technical, result, destination)
+    except OSError as exc:
+        raise SocinproContractError(
+            "AUDITORIA_SOCINPRO_FALHOU:DEMONSTRATIVO_PRESERVADO; "
+            "verifique a pasta de histórico e repita a publicação."
+        ) from exc
     return SocinproResult(**{**result.__dict__, "source_folder": source_folder, "demonstrative_path": destination})
 
 
@@ -213,8 +219,20 @@ def _write_demonstrative(path: Path, result: SocinproResult) -> None:
 def _write_audit(root: Path, result: SocinproResult, demonstrative: Path) -> None:
     root.mkdir(parents=True, exist_ok=True)
     payload = {"pipeline_version": "socinpro-v1", "processed_at": datetime.now(timezone.utc).isoformat(), "entity": result.entity, "competence": result.competence, "status": result.status, "documentary_total": str(result.documentary_total), "bank_total": str(result.bank_total), "difference": str(result.difference), "payment_ids": [line.payment.payment_id for line in result.lines], "evidence": list(result.evidence), "pending": list(result.pending), "demonstrative_sha256": _binary_hash(demonstrative)}
-    target = root / f"socinpro_{result.entity.lower()}_{result.competence.replace('-', '')}.json"
-    temporary = target.with_suffix(".json.tmp"); temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"); temporary.replace(target)
+    # A distinct private directory per publication preserves every previous audit,
+    # including the legacy monthly JSON files. No shared .tmp file between runs.
+    run_dir = Path(mkdtemp(prefix=f"socinpro_{result.entity.lower()}_{result.competence.replace('-', '')}_", dir=root))
+    temporary = run_dir / 'audit.json.tmp'
+    try:
+        with temporary.open('x', encoding='utf-8') as output:
+            json.dump(payload, output, ensure_ascii=False, indent=2)
+            output.flush()
+            os.fsync(output.fileno())
+        temporary.replace(run_dir / 'audit.json')
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        run_dir.rmdir()
+        raise
 
 
 def _validate_payment(payment: SocinproPayment) -> None:

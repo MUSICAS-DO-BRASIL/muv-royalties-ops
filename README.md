@@ -71,6 +71,29 @@ somente se os dois jobs de testes passarem. Pull requests não publicam imagens.
 Não há deploy automático na Hostinger. Resultados e referência da imagem ficam
 na aba Actions. Veja [recuperação e publicação](docs/RECOVERY_AND_IMAGES.md).
 
+## Entrada, resultados e histórico
+
+| Tipo | Destino e comportamento |
+|---|---|
+| Upload bancário | Cópia em pasta temporária exclusiva. O nome deve ser apenas um nome de PDF, sem caminho; arquivos existentes não são substituídos. A cópia é removida ao terminar, inclusive em caso de erro. |
+| Extrato bancário para download | Gerado em memória; o navegador salva onde o operador escolher. Não cria automaticamente um arquivo permanente no servidor. |
+| Conciliação mensal | `MUV_OPERATIONAL_ROOT/AAAA/MMAAAA/ENTIDADE/`. A preparação cria um arquivo novo e preserva o existente; etapas COM exigem Windows. |
+| Demonstrativo SOCINPRO | Subpasta `SOCINPRO` da entidade/competência. Repetição equivalente preserva o arquivo; conteúdo divergente bloqueia a publicação. |
+| Auditoria SOCINPRO | `technical_root/socinpro_entidade_AAAAMM_<id>/audit.json`, um diretório por publicação. A pasta técnica deve estar fora de toda a raiz operacional. No Docker, use armazenamento persistente, por exemplo `/data/technical`. |
+
+As rotinas não movem nem apagam os documentos originais do operador. Os uploads
+bancários não são um arquivo histórico permanente: mantenha os originais em seu
+local operacional autorizado. Auditorias mensais antigas em JSON são preservadas;
+novas publicações não as substituem. Consumidores externos do histórico devem
+considerar os novos subdiretórios, além dos arquivos legados existentes.
+
+Se o demonstrativo for salvo e a gravação da auditoria falhar, a publicação informa
+`AUDITORIA_SOCINPRO_FALHOU:DEMONSTRATIVO_PRESERVADO`. Corrija a pasta técnica e
+repita a publicação; o demonstrativo equivalente é preservado. Isso não cria uma
+transação única entre workbook e auditoria. A interface bancária continua exibindo
+erros de processamento ao operador; um histórico persistente de todas as falhas
+bancárias ainda não está implementado.
+
 ## Segurança
 
 Projeto interno e proprietário. O repositório não contém dados financeiros ou documentos operacionais de produção.
