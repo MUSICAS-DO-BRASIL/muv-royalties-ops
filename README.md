@@ -120,8 +120,11 @@ e os [limites da recuperação e publicação](docs/RECOVERY_AND_IMAGES.md).
 
 ## Roadmap
 
-1. Configurar proteção da `main` com os checks obrigatórios e fixar dependências
-   transitivas para construções Linux reproduzíveis.
+1. Habilitar proteção da `main` com os checks obrigatórios quando o plano do
+   GitHub permitir esse recurso no repositório privado. Em 21/09/2026, as APIs
+   de proteção/rulesets retornaram HTTP 403 por limitação de plano; nenhuma regra
+   foi ativada e a visibilidade do repositório foi preservada. Até lá, usar PRs e
+   conferir `Python synthetic tests` e `Docker tests and recovery` antes de integrar.
 2. Definir backup externo, agendamento, retenção e alertas de falha para produção.
 3. Implantar staging na Hostinger com acesso protegido e dados fictícios.
 4. Preparar e validar Playwright/Chromium em ambiente próprio para SOCINPRO,
@@ -164,6 +167,30 @@ Esse snapshot não é um lock universal para Linux/Windows. Apenas em uma estaç
 Windows com Excel desktop, instale também `requirements-windows.txt` para COM.
 MSAL não é necessário para o core: o transporte Graph autenticado não está
 implementado neste clone.
+
+### Dependências fixadas para Linux
+
+`constraints-linux-py314.txt` fixa as versões diretas e transitivas do ambiente
+Linux/Python 3.14 de runtime e testes. O Dockerfile aplica esse arquivo nos dois
+estágios de instalação, e o job Python do GitHub usa as mesmas restrições:
+
+```sh
+python -m pip install -r requirements-dev.txt -r requirements-container.txt -c constraints-linux-py314.txt
+python -m pip check
+```
+
+Use esse comando em um ambiente virtual Linux. O arquivo é passado com `-c`,
+não `-r`: pytest e outras dependências exclusivas de testes não entram na imagem
+de runtime só por constarem no snapshot. O Mac mantém seu arquivo de constraints
+próprio; Windows/COM e Playwright não estão cobertos pelo snapshot Linux.
+
+Ao atualizar dependências, altere os requisitos diretos quando necessário,
+resolva as versões em uma imagem Linux limpa e atualize o snapshot em um PR.
+Valide o build, `pip check`, a suíte e o ensaio de recuperação antes de integrar.
+Não gere esse arquivo com `pip freeze` do ambiente pessoal macOS ou de um ambiente
+com pacotes alheios ao projeto. Versões fixadas reduzem mudanças inesperadas;
+esse snapshot não contém hashes de pacotes nem garante imagens idênticas byte a
+byte. As imagens-base continuam fixadas por digest no Dockerfile/Compose.
 
 ### Testes e aplicação local
 

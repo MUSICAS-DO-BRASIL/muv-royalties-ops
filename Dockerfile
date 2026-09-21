@@ -6,8 +6,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app/recebimentos/process_extrato:/app/recebimentos/process_extrato/btg:/app/recebimentos/process_extrato/mdb \
     HOME=/home/muv
 WORKDIR /app
-COPY requirements.txt requirements-container.txt ./
-RUN python -m pip install --no-cache-dir -r requirements-container.txt \
+COPY requirements.txt requirements-container.txt constraints-linux-py314.txt ./
+RUN python -m pip install --no-cache-dir -r requirements-container.txt -c constraints-linux-py314.txt \
+    && python -m pip check \
     && groupadd --gid 10001 muv \
     && useradd --uid 10001 --gid muv --create-home muv \
     && mkdir -p /data/months /data/templates /data/config /data/technical \
@@ -24,7 +25,8 @@ FROM runtime AS test
 USER root
 COPY requirements-dev.txt pyproject.toml ./
 COPY scripts/backup_postgres.py ./scripts/backup_postgres.py
-RUN python -m pip install --no-cache-dir -r requirements-dev.txt
+RUN python -m pip install --no-cache-dir -r requirements-dev.txt -c constraints-linux-py314.txt \
+    && python -m pip check
 USER 10001:10001
 HEALTHCHECK NONE
 CMD ["python", "-m", "pytest", "-p", "no:cacheprovider"]
