@@ -32,7 +32,7 @@ jobs:
       - run: git diff --check
 
   docker:
-    name: Docker tests and persistence
+    name: Docker tests and recovery
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -42,4 +42,55 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.14'
-      - run: python scripts/validate_docker.py
+      - name: Test and export the validated image
+        run: python scripts/validate_docker.py --export-image "$RUNNER_TEMP/validated-image.tar"
+      - name: Retain validated image for publication
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: validated-image
+          path: |
+            ${{ runner.temp }}/validated-image.tar
+            ${{ runner.temp }}/validated-image.tar.id
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+
+  publish:
+    name: Publish validated image
+    needs: [python, docker]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: validated-image
+          path: ${{ runner.temp }}/validated-image
+      - name: Load and publish the tested image without rebuilding
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+          GH_REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          export DOCKER_CONFIG="$RUNNER_TEMP/muv-registry-login"
+          mkdir -m 700 "$DOCKER_CONFIG"
+          trap 'docker logout ghcr.io >/dev/null 2>&1 || true; rm -rf "$DOCKER_CONFIG"' EXIT
+          archive="$RUNNER_TEMP/validated-image/validated-image.tar"
+          image_id=$(cat "$archive.id")
+          [[ "$image_id" =~ ^sha256:[a-f0-9]{64}$ ]]
+          docker image load --input "$archive"
+          docker image inspect "$image_id" >/dev/null
+          repository="ghcr.io/${GH_REPOSITORY,,}"
+          tag="sha-${GITHUB_SHA}-run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          image="$repository:$tag"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GH_ACTOR" --password-stdin
+          docker image tag "$image_id" "$image"
+          docker image push "$image"
+          digest=$(docker image inspect --format '{{index .RepoDigests 0}}' "$image")
+          printf 'Published image: `%s`\n\nHostinger MUV_APP_IMAGE: `%s`\n\nPlatform: `linux/amd64`\n' "$image" "$digest" >> "$GITHUB_STEP_SUMMARY"
