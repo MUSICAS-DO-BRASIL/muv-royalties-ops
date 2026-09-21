@@ -131,6 +131,7 @@ recebimentos/**/node_modules/
 recebimentos/**/_archive_legacy/
 technical_artifacts/
 recebimentos/**/runs/
+**/provenance_checkpoint.json
 recebimentos/**/revision_*/
 recebimentos/**/extraction_staging/
 recebimentos/**/tmp_artifact*/
