@@ -1,6 +1,22 @@
+<p><img src="docs/assets/repository-cover.svg" alt="MUV Royalties Ops — Engenharia para royalties" width="100%" /></p>
+
 # MUV Royalties Ops
 
 Projeto interno para apoiar a operação de royalties da MUV, com automações de leitura, preparação, validação e conciliação de informações operacionais.
+
+## Engenharia de dados aplicada
+
+Um fluxo de dados para transformar arquivos de royalties em informações preparadas para conciliação. O projeto combina ingestão, staging, normalização, regras de negócio e evidências de auditoria.
+
+| Etapa | Foco de engenharia |
+| --- | --- |
+| Ingestão | Leitura de documentos e arquivos de fontes externas. |
+| Transformação | Preparação e normalização com regras explícitas em Python. |
+| Qualidade | Validação, conferência e conciliação dos resultados. |
+| Rastreabilidade | Preservação de origem e evidências por publicação. |
+| Operação | Testes sintéticos, containers e recuperação documentada. |
+
+[Visão técnica](#arquitetura) · [Evidências](#estado-atual) · [Desenvolvimento](#ambiente-de-desenvolvimento-e-home-office)
 
 ## Objetivo
 

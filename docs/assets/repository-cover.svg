@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-labelledby="title desc">
+<title id="title">MUV Royalties Ops — Engenharia para royalties</title><desc id="desc">Da leitura de arquivos à conciliação financeira.. Pipeline visual: fontes, transformação e dados confiáveis.</desc>
+<defs><pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse"><path d="M32 0H0V32" fill="none" stroke="#29515A" stroke-width="0.7"/></pattern></defs>
+<rect width="1200" height="420" rx="20" fill="#102A32"/><rect x="780" width="420" height="420" fill="url(#grid)"/>
+<path d="M0 0H1200" stroke="#7FE0CF" stroke-width="8"/>
+<g font-family="Arial,Helvetica,sans-serif"><text x="60" y="64" fill="#7FE0CF" font-size="14" font-weight="700" letter-spacing="3">ENGENHARIA PARA ROYALTIES</text>
+<text x="56" y="157" fill="#F3F6F0" font-size="72" font-weight="700" letter-spacing="-3">MUV Royalties Ops</text>
+<text x="60" y="202" fill="#A6C0BE" font-size="23">Da leitura de arquivos à conciliação financeira.</text>
+<path d="M60 244H710" stroke="#29515A"/>
+<text x="60" y="283" fill="#7FE0CF" font-size="17" font-weight="700">FONTES</text><text x="224" y="283" fill="#A6C0BE" font-size="19">→</text>
+<text x="272" y="283" fill="#F3F6F0" font-size="17" font-weight="700">TRANSFORMAÇÃO</text><text x="482" y="283" fill="#A6C0BE" font-size="19">→</text>
+<text x="530" y="283" fill="#7FE0CF" font-size="17" font-weight="700">DADOS CONFIÁVEIS</text>
+<text x="60" y="368" fill="#A6C0BE" font-size="14" letter-spacing="1">PYTHON  /  STAGING  /  VALIDAÇÃO  /  AUDITORIA</text></g>
+<g fill="none" stroke="#29515A" stroke-width="2"><path d="M820 108H878V156H938V205H1018V274H1100"/><path d="M820 205H878V156M938 108V205M1018 156V274M878 300H938V205"/></g>
+<g fill="#102A32" stroke="#7FE0CF" stroke-width="2"><rect x="800" y="89" width="38" height="38" rx="9"/><rect x="858" y="137" width="38" height="38" rx="9"/><rect x="918" y="186" width="38" height="38" rx="9"/><rect x="998" y="255" width="38" height="38" rx="9"/><rect x="1080" y="255" width="38" height="38" rx="9"/></g>
+<g fill="#7FE0CF"><circle cx="819" cy="108" r="5"/><circle cx="877" cy="156" r="5"/><circle cx="937" cy="205" r="5"/><circle cx="1017" cy="274" r="5"/><circle cx="1099" cy="274" r="5"/></g>
+<g fill="#E8A56B"><circle cx="938" cy="108" r="6"/><circle cx="820" cy="205" r="6"/><circle cx="878" cy="300" r="6"/></g></svg>
